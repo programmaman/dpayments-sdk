@@ -5,6 +5,14 @@
   "description": "npm SDK for Disputable Payments workflows",
   "license": "MIT",
   "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/programmaman/dpayments-sdk.git"
+  },
+  "homepage": "https://github.com/programmaman/dpayments-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/programmaman/dpayments-sdk/issues"
+  },
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
