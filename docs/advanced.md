@@ -97,6 +97,23 @@ const dpayments = new DPayments({
 const dpayments = await DPayments.fromProvider(provider, address, impls[1]);
 ```
 
+## Multicall (batching)
+
+Pass a `multicall` config to reduce RPC calls from 8+ parallel to 1 batched call for `readPayment`
+and `readFactory`. Uses the Multicall3 contract at the configured address.
+
+```ts
+const dpayments = await DPayments.fromProvider(provider, address, undefined, {
+  multicall: {
+    address: '0xcA11bde05977b3631167028862bE2a173976CA11', // Multicall3 on mainnet
+  },
+});
+
+// All subsequent readPayment / readFactory calls will use a single multicall batch.
+const info = await dpayments.dPayment('0xPAYMENT...').read();
+const config = await dpayments.factory.readConfig();
+```
+
 ## Event log filtering
 
 Use `PaymentEvents` to decode raw EVM logs:

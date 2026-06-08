@@ -499,12 +499,14 @@ export class DPayments {
      * @param walletAddress     Optional — when set, all write ops pre-fill `callerWallet`.
      * @param implNameOrAddress Optional — name or address of a registered implementation.
      *                          Omit to use the factory's live default.
+     * @param multicall
      * @throws if the provider's chain ID has no known factory deployment.
      */
     static async fromProvider(
         provider: AbstractProvider,
         walletAddress?: string,
         implNameOrAddress?: string,
+        multicall?: MulticallConfig,
     ): Promise<DPayments> {
         const { chainId } = await provider.getNetwork();
         const factoryAddress = getFactoryAddress(Number(chainId));
@@ -522,7 +524,7 @@ export class DPayments {
             impl = await this._resolveImpl(provider, factoryAddress, implNameOrAddress);
         }
 
-        return new DPayments({ chainId: Number(chainId), factoryAddress, provider, walletAddress, impl });
+        return new DPayments({ chainId: Number(chainId), factoryAddress, provider, walletAddress, impl, multicall });
     }
 
     private static async _resolveImpl(
