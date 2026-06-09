@@ -79,6 +79,8 @@ const { tx: createTx, paymentId } = await dpayments.factory.prepareCreateEthPaym
   settlementTimeUnixSec:  settleAt,
 });
 
+console.log('Create payment preview:', createTx.preview);
+
 // ─── Step 2: Find the deployed payment ───────────────────────────────────────
 
 const logs   = await dpayments.factory.getLogs(0, 'latest');
@@ -134,6 +136,6 @@ Full reference: [docs/error-decoder.md](docs/error-decoder.md).
 
 ## Smart Contract Disclosure
 
-**This software instantiates autonomous, immutable contracts. The author has zero administrative control or upgrade authority post-deployment. Users interact with this software entirely at their own risk.**
+**This software deploys autonomous, immutable contracts. The author has zero administrative control or upgrade authority over your deployed contracts. Every transaction includes a human-readable preview -- check it before signing to verify exactly what you are approving. Please be careful when transacting with others. Users interact with this software entirely at their own risk.**
 
 ---
