@@ -68,13 +68,11 @@ const payeeAddress = '0xPAYEE_WALLET_ADDRESS';
 // ETH is sent with the transaction: gross = net + fee.
 // The payment is funded immediately on-chain.
 
-const tinyAmount = 1_000_000n; // 0.000001 ETH in wei
-
 const now      = BigInt(Math.floor(Date.now() / 1000));
 const settleAt = now + 60n; // 60 seconds from now
 
 const { tx: createTx, paymentId } = await dpayments.factory.prepareCreateEthPayment({
-  netAmount:              tinyAmount,
+  netAmount:              ethers.parseEther("0.000001"),
   payeeAddress,
   settlementTimeUnixSec:  settleAt,
 });
