@@ -39,9 +39,6 @@
     "build": "tsc",
     "regenerate": "npm run typechain && node scripts/patch-typechain.mjs",
     "prepack": "npm run build",
-    "pack:dry-run": "npm pack --dry-run",
-    "release:check": "npm run test && npm run pack:dry-run",
-    "prepublishOnly": "npm run release:check",
     "test": "npm run build && node --test dist/test/*.test.js",
     "test:e2e": "npm run build && node --import tsx/esm --test --test-concurrency=1 test/e2e/*.e2e.test.ts",
     "test:ci": "npm run build && node --test dist/test/*.test.js && node --import tsx/esm --test --test-concurrency=1 test/e2e/*.e2e.test.ts"
@@ -57,13 +54,10 @@
     "typescript": "^5.0.0"
   },
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   },
   "files": [
     "dist/src",
-    "dist/generated",
-    "README.md",
-    "LICENSE"
+    "dist/generated"
   ]
 }

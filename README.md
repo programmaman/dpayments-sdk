@@ -8,7 +8,7 @@ DPayments is a JavaScript / TypeScript library for holding payments between two 
 
 - A **payer** sends funds (ETH or ERC20) into a smart contract.
 - A **payee** claims the funds after a settlement time, or refunds voluntarily.
-- If there's a disagreement, either party raises a **Kleros dispute**, where jurors decide the outcome.
+- If the payee does not deliver by the settlement time, the **payer** can raise a **Kleros dispute**, where jurors decide the outcome.
 - Rulings are enforced automatically on-chain.
 
 > **This library never touches your users' money.** It prepares unsigned transactions. Your app hands them to the user's wallet (MetaMask, WalletConnect). The user signs and submits. Your server never holds private keys.
@@ -28,7 +28,7 @@ npm install @rakelabs/dpayments-sdk ethers
 
 ## Payment lifecycle
 
-The lifecycle covers payment, settlement, and optional dispute resolution.
+The lifecycle covers payment, settlement, and optional dispute resolution. If the payee fails to deliver or the parties disagree, the payer can escalate to dispute resolution before settlement finalizes.
 
 ## Quick start
 
