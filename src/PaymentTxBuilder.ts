@@ -102,8 +102,8 @@ export class PaymentTxBuilder {
     private readonly erc20Iface: Interface;
 
     constructor() {
-        this.factoryIface = PaymentFactory__factory.createInterface() as unknown as Interface;
-        this.paymentIface = DisputablePayment__factory.createInterface() as unknown as Interface;
+        this.factoryIface = PaymentFactory__factory.createInterface();
+        this.paymentIface = DisputablePayment__factory.createInterface();
         this.erc20Iface   = new Interface(ERC20_ABI);
     }
 

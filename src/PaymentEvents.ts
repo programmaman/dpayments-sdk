@@ -70,7 +70,7 @@ export class PaymentEvents {
      */
     tryDecodePaymentCreated(log: EvmLog): PaymentCreatedEvent | undefined {
         if (!matchesTopic(log, TOPIC_PAYMENT_CREATED)) return undefined;
-        const parsed = factoryIface.parseLog({ topics: log.topics as string[], data: log.data })!;
+        const parsed = factoryIface.parseLog({ topics: log.topics, data: log.data })!;
         return {
             paymentId:       parsed.args.id             as string,
             paymentAddress:  parsed.args.payment        as string,
@@ -92,7 +92,7 @@ export class PaymentEvents {
      */
     tryDecodePaymentSettled(log: EvmLog): PaymentSettledEvent | undefined {
         if (!matchesTopic(log, TOPIC_PAYMENT_SETTLED)) return undefined;
-        const parsed = paymentIface.parseLog({ topics: log.topics as string[], data: log.data })!;
+        const parsed = paymentIface.parseLog({ topics: log.topics, data: log.data })!;
         return {
             payee:           parsed.args.payee  as string,
             amount:          parsed.args.amount as bigint,
@@ -106,7 +106,7 @@ export class PaymentEvents {
      */
     tryDecodeDisputeRaised(log: EvmLog): DisputeRaisedEvent | undefined {
         if (!matchesTopic(log, TOPIC_DISPUTE_RAISED)) return undefined;
-        const parsed = paymentIface.parseLog({ topics: log.topics as string[], data: log.data })!;
+        const parsed = paymentIface.parseLog({ topics: log.topics, data: log.data })!;
         return {
             disputeId:       parsed.args.disputeId as bigint,
             raisedBy:        parsed.args.raisedBy  as string,
@@ -120,7 +120,7 @@ export class PaymentEvents {
      */
     tryDecodeResolvedToPayee(log: EvmLog): ResolvedToPayeeEvent | undefined {
         if (!matchesTopic(log, TOPIC_RESOLVED_TO_PAYEE)) return undefined;
-        const parsed = paymentIface.parseLog({ topics: log.topics as string[], data: log.data })!;
+        const parsed = paymentIface.parseLog({ topics: log.topics, data: log.data })!;
         return {
             payee:           parsed.args.payee as string,
             paid:            parsed.args.paid  as bigint,
@@ -134,7 +134,7 @@ export class PaymentEvents {
      */
     tryDecodeRefundedToPayer(log: EvmLog): RefundedToPayerEvent | undefined {
         if (!matchesTopic(log, TOPIC_REFUNDED_TO_PAYER)) return undefined;
-        const parsed = paymentIface.parseLog({ topics: log.topics as string[], data: log.data })!;
+        const parsed = paymentIface.parseLog({ topics: log.topics, data: log.data })!;
         return {
             payer:           parsed.args.payer as string,
             paid:            parsed.args.paid  as bigint,
@@ -150,7 +150,7 @@ export class PaymentEvents {
      */
     tryDecodeEvidence(log: EvmLog): PaymentEvidenceEvent | undefined {
         if (!matchesTopic(log, TOPIC_EVIDENCE)) return undefined;
-        const parsed = paymentIface.parseLog({ topics: log.topics as string[], data: log.data })!;
+        const parsed = paymentIface.parseLog({ topics: log.topics, data: log.data })!;
         return {
             arbitrator:      parsed.args._arbitrator      as string,
             evidenceGroupId: parsed.args._evidenceGroupID as bigint,

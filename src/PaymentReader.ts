@@ -305,7 +305,7 @@ export class PaymentReader {
             payee:           payee as string,
             token:           token as string,
             amount:          amount as bigint,
-            state:           paymentStateFromOrdinal(Number(stateOrd as bigint)),
+            state:           paymentStateFromOrdinal(Number(stateOrd)),
             settlementTime:  settlementTime as bigint,
             disputeId:       disputeId as bigint,
             disputeStartTime:disputeStartTime as bigint,

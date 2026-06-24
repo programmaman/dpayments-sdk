@@ -10,7 +10,7 @@ export enum PaymentState {
 
 export function paymentStateFromOrdinal(ordinal: number): PaymentState {
     if (ordinal < 0 || ordinal > 3) throw new Error(`Unknown PaymentState ordinal: ${ordinal}`);
-    return ordinal as PaymentState;
+    return ordinal;
 }
 
 // ─── Reader result types ───────────────────────────────────────────────────────
