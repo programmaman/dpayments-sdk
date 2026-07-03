@@ -21,13 +21,14 @@ import { PaymentEvents, TOPIC_PAYMENT_CREATED } from './PaymentEvents.js';
 import { DPayment } from './DPayment.js';
 import { requireAddress, IdGenerator } from './common/index.js';
 import type { MulticallConfig } from './multicall.js';
-import { getFactoryAddress, listDeployments } from './deployments.js';
+import { FACTORY_ADDRESS, getFactoryAddress } from './deployments.js';
 
 // ─── SDK config ───────────────────────────────────────────────────────────────
 
 export interface DPaymentsSdkConfig {
     chainId: number;
-    factoryAddress: string;
+    /** Defaults to the replayed DPayments factory address. */
+    factoryAddress?: string;
     /** ethers AbstractProvider (JsonRpcProvider, BrowserProvider, …). */
     provider: AbstractProvider;
     /**
@@ -422,8 +423,10 @@ export class DPayments {
     private readonly _impl?:    string;
 
     constructor(config: DPaymentsSdkConfig) {
-        requireAddress(config.factoryAddress, 'factoryAddress');
-        this._cfg      = { chainId: config.chainId, factoryAddress: config.factoryAddress };
+        const chainId = DPayments._normalizeChainId(config.chainId);
+        const factoryAddress = config.factoryAddress ?? getFactoryAddress(chainId) ?? FACTORY_ADDRESS;
+        requireAddress(factoryAddress, 'factoryAddress');
+        this._cfg      = { chainId, factoryAddress };
         this._provider = config.provider;
         this._reader   = new PaymentReader(config.provider, config.multicall);
         this._builder  = new PaymentTxBuilder();
@@ -440,20 +443,24 @@ export class DPayments {
     }
 
     /**
-     * Creates a `DPayments` instance using a known deployment for the given chain ID.
+     * Creates a `DPayments` instance using the replayed factory address for the given chain ID.
      *
      * Convenience equivalent to:
      * ```ts
-     * const factoryAddr = getFactoryAddress(chainId);
-     * if (!factoryAddr) throw ...;
-     * return new DPayments({ chainId, factoryAddress: factoryAddr, provider, walletAddress, impl });
+     * return new DPayments({
+     *   chainId,
+     *   factoryAddress: FACTORY_ADDRESS,
+     *   provider,
+     *   walletAddress,
+     *   impl,
+     * });
      * ```
      *
-     * @param chainId 1, 3, 4, 5, 42, 10, 137, 80001, etc.
+     * @param chainId Any positive integer chain ID.
      * @param provider
      * @param walletAddress
      * @param impl Optional payment implementation. Omit to use the factory's live default.
-     * @throws if no known deployment exists for this chain ID.
+     * @throws if `chainId` is not a positive safe integer.
      */
     static forChain(
         chainId: number,
@@ -461,21 +468,12 @@ export class DPayments {
         walletAddress?: string,
         impl?: PaymentImplementationInfo,
     ): DPayments {
-        const factoryAddress = getFactoryAddress(chainId);
-        if (!factoryAddress) {
-            const known = listDeployments().map(d => d.chainId).join(', ');
-            throw new Error(
-                `No default DPayments deployment known for chain ID ${chainId}. ` +
-                `Provide a factoryAddress explicitly via new DPayments({ ... }). ` +
-                `Known chains: ${known}.`,
-            );
-        }
-        return new DPayments({ chainId: Number(chainId), factoryAddress, provider, walletAddress, impl });
+        return new DPayments({ chainId, provider, walletAddress, impl });
     }
 
     /**
      * Creates a `DPayments` instance by auto-detecting the chain from the provider
-     * and resolving the factory address from known deployments.
+     * and using the canonical replayed factory address.
      *
      * This is the **recommended** entry point — zero config:
      * ```ts
@@ -500,7 +498,7 @@ export class DPayments {
      * @param implNameOrAddress Optional — name or address of a registered implementation.
      *                          Omit to use the factory's live default.
      * @param multicall
-     * @throws if the provider's chain ID has no known factory deployment.
+     * @throws if the provider returns an invalid chain ID.
      */
     static async fromProvider(
         provider: AbstractProvider,
@@ -509,22 +507,22 @@ export class DPayments {
         multicall?: MulticallConfig,
     ): Promise<DPayments> {
         const { chainId } = await provider.getNetwork();
-        const factoryAddress = getFactoryAddress(Number(chainId));
-        if (!factoryAddress) {
-            const known = listDeployments().map(d => d.chainId).join(', ');
-            throw new Error(
-                `No default DPayments deployment known for chain ID ${chainId}. ` +
-                `Provide a factoryAddress explicitly via new DPayments({ ... }). ` +
-                `Known chains: ${known}.`,
-            );
-        }
+        const chainIdNumber = DPayments._normalizeChainId(Number(chainId));
+        const factoryAddress = FACTORY_ADDRESS;
 
         let impl: PaymentImplementationInfo | undefined;
         if (implNameOrAddress) {
             impl = await this._resolveImpl(provider, factoryAddress, implNameOrAddress);
         }
 
-        return new DPayments({ chainId: Number(chainId), factoryAddress, provider, walletAddress, impl, multicall });
+        return new DPayments({ chainId: chainIdNumber, provider, walletAddress, impl, multicall });
+    }
+
+    private static _normalizeChainId(chainId: number): number {
+        if (!Number.isSafeInteger(chainId) || chainId <= 0) {
+            throw new Error(`Invalid DPayments chain ID: ${chainId}.`);
+        }
+        return chainId;
     }
 
     private static async _resolveImpl(

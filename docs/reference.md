@@ -1,134 +1,217 @@
-# Reference
+# API Reference
 
-Cheat sheet for every action, type, and common mistake.
+Compact reference for the public DPayments npm surface.
 
-## States
+## Main Exports
 
 ```ts
-enum PaymentState { PAID, SETTLED, DISPUTED, RESOLVED }
+import {
+  DPayments,
+  DPayment,
+  PaymentTxBuilder,
+  PaymentReader,
+  PaymentEvents,
+  PaymentTopics,
+  PaymentState,
+  decodeDPaymentError,
+  IdGenerator,
+} from '@rakelabs/dpayments-sdk';
 ```
 
-## Factory actions
-
-| Method | Description | Who signs |
-|--------|-------------|:---------:|
-| `factory.readConfig()` | Read factory config (fee, arbitrator, impls, etc.). | N/A (read) |
-| `factory.quoteGross(net)` | Quote gross = net + fee. | N/A (read) |
-| `factory.feeBps()` | Current protocol fee in basis points. | N/A (read) |
-| `factory.prepareCreateEthPayment(params)` | Quote fee + build create + fund tx in one call. | Payer |
-| `factory.prepareCreateErc20Payment(params)` | Quote + predict + build approve + create txs. | Payer |
-| `factory.createEthPayment(params)` | Build create tx only (you supply fee). | Payer |
-| `factory.createErc20Payment(params)` | Build create tx only (you supply fee). | Payer |
-| `factory.erc20Approve(params)` | Build ERC20 approve tx. | Payer |
-| `factory.predictAddress(creator, req)` | Predict clone address before creating. | N/A (read) |
-| `factory.implementationCount()` | Number of registered payment implementations. | N/A (read) |
-| `factory.implementationAt(index)` | Implementation address + name at index. | N/A (read) |
-| `factory.listImplementations()` | All registered implementations. | N/A (read) |
-| `factory.getLogs(from, to)` | Fetch PaymentCreated events from factory. | N/A (read) |
-| `factory.getLogsByParty(role, address)` | Fetch events filtered by payer or payee. | N/A (read) |
-| `factory.getLogsByCreator(address)` | Fetch events by creator address. | N/A (read) |
-| `factory.getLogsByPayee(address)` | Fetch events by payee address. | N/A (read) |
-
-### CreatePayment params
+## State Enum
 
 ```ts
-{
-  paymentId:              string;   // bytes32 hex (auto-generated if omitted)
-  payeeAddress:           string;
-  tokenAddress?:          string;   // omit for ETH, set for ERC20
-  amount:                 bigint;   // NET payee receives
-  fee:                    bigint;   // protocol fee (from quoteGross)
-  settlementTimeUnixSec:  bigint;   // absolute Unix timestamp
+enum PaymentState {
+  PAID = 0,
+  SETTLED = 1,
+  DISPUTED = 2,
+  RESOLVED = 3,
 }
 ```
 
-### FactoryInfo fields
+## Top-Level SDK
+
+| Method | Purpose |
+| --- | --- |
+| `DPayments.fromProvider(provider, walletAddress?, implNameOrAddress?, multicall?)` | Detect chain and default factory from provider. |
+| `DPayments.forChain(chainId, provider, walletAddress?, impl?)` | Use the canonical factory address for a specific chain ID. |
+| `new DPayments(config)` | Use explicit factory, chain, multicall, and implementation config. |
+| `dpayments.dPayment(address)` | Return a bound payment handle. No network call. |
+
+## SDK Config
 
 ```ts
-{
-  factoryAddress:         string;
-  defaultImpl:            string;
-  defaultImplName:        string;
-  feeBps:                 bigint;
-  feeRecipient:           string;
-  arbitrator:             string;
-  arbitratorConfiguration: string;
-  metaEvidenceUri:        string;
-  owner:                  string;
-  pendingOwner:           string;
+interface DPaymentsSdkConfig {
+  chainId: number;
+  factoryAddress: string;
+  provider: AbstractProvider;
+  walletAddress?: string;
+  multicall?: { address: string };
+  impl?: { address: string; name: string };
 }
 ```
 
-## Payment reads
+## Factory Reads
 
 | Method | Returns |
-|--------|---------|
-| `dPayment.read()` | `PaymentInfo`, all on-chain state |
-| `dPayment.arbitrationCost()` | `bigint`, current Kleros arbitration fee in wei |
-| `dPayment.appealCost()` | `bigint`, current appeal fee (DISPUTED only) |
-| `dPayment.appealPeriod()` | `{ start, end }`, appeal window (DISPUTED only) |
-| `dPayment.pendingWithdrawal(address)` | `bigint`, ETH queued for pull-payment fallback |
-| `dPayment.getEvidenceLogs(fromBlock, toBlock)` | `PaymentEvidenceEvent[]`, evidence log history |
-| `dPayment.getLogs()` | `PaymentEvent[]`, all payment events |
+| --- | --- |
+| `factory.readConfig()` | `FactoryInfo` |
+| `factory.quoteGross(net)` | `{ gross, fee }` |
+| `factory.feeBps()` | `bigint` |
+| `factory.implementationCount()` | `number` |
+| `factory.implementationAt(index)` | `{ address, name }` |
+| `factory.listImplementations()` | `{ address, name }[]` |
+| `factory.predictAddress(creator, req)` | Predicted clone address |
+| `factory.getLogs(from?, to?)` | `PaymentCreatedEvent[]` |
+| `factory.getLogsByParty(role, party, from?, to?)` | `PaymentCreatedEvent[]` |
+| `factory.getLogsByCreator(creator, from?, to?)` | `PaymentCreatedEvent[]` |
+| `factory.getLogsByPayee(payee, from?, to?)` | `PaymentCreatedEvent[]` |
 
-### PaymentInfo fields
+## Factory Writes
+
+| Method | Description | Who signs |
+| --- | --- | --- |
+| `factory.prepareCreateEthPayment(params)` | Quote fee and build ETH create transaction. | Payer |
+| `factory.prepareCreateErc20Payment(params)` | Quote fee, predict clone, build ERC20 approve and create transactions. | Payer |
+| `factory.createEthPayment(params)` | Build ETH create transaction when you already know fee values. | Payer |
+| `factory.createErc20Payment(params)` | Build ERC20 create transaction when you already know fee values. | Payer |
+| `factory.erc20Approve(params)` | Build ERC20 approval transaction. | Token owner |
+
+### Prepare Create Params
 
 ```ts
-{
-  paymentAddress:          string;
-  state:                   PaymentState;
-  payer:                   string;
-  payee:                   string;
-  token:                   string;       // 0x0 = ETH
-  amount:                  bigint;       // NET (payee receives this)
-  settlementTime:          bigint;       // Unix sec
-  disputeId:               bigint;       // 0n = never disputed
-  disputeStartTime:        bigint;       // Unix sec
-  arbitratorAddress:       string;
-  arbitratorConfiguration: string;       // raw hex (snapshotted at creation)
+interface PrepareCreateParams {
+  netAmount: bigint;
+  paymentId?: string;
+  payeeAddress: string;
+  settlementTimeUnixSec: bigint;
+}
+
+interface PrepareCreateErc20Params extends PrepareCreateParams {
+  tokenAddress: string;
 }
 ```
 
-## Payment writes
+### Prepare Results
+
+```ts
+type PrepareCreateEthResult = {
+  tx: PreparedTx;
+  paymentId: string;
+  gross: bigint;
+  fee: bigint;
+};
+
+type PrepareCreateErc20Result = {
+  approveTx: PreparedTx;
+  createTx: PreparedTx;
+  paymentId: string;
+  gross: bigint;
+  fee: bigint;
+  predictedAddress: string;
+};
+```
+
+## Payment Reads
+
+| Method | Returns |
+| --- | --- |
+| `dPayment.read()` | `PaymentInfo` |
+| `dPayment.arbitrationCost()` | Current Kleros arbitration fee |
+| `dPayment.appealCost()` | Current appeal fee |
+| `dPayment.appealPeriod()` | `{ start, end }` |
+| `dPayment.pendingWithdrawal(address)` | Claimable ETH balance |
+| `dPayment.getEvidenceLogs(from?, to?)` | Evidence events |
+| `dPayment.getLogs(from?, to?)` | Decoded payment events |
+
+## Payment Writes
 
 | Method | Description |
-|--------|-------------|
-| `dPayment.settle()` | Build settle tx. |
-| `dPayment.voluntaryRefund()` | Build voluntary refund tx. |
-| `dPayment.prepareRaiseDispute()` | Fetch arb fee + build raiseDispute tx. |
-| `dPayment.raiseDispute(arbFeeWei)` | Build raiseDispute tx. |
-| `dPayment.submitEvidence(uri)` | Build evidence tx. |
-| `dPayment.appeal(extraData, feeWei)` | Build appeal tx. |
-| `dPayment.prepareAppeal(extraData?)` | Fetch appeal fee + period + build tx. |
-| `dPayment.claim()` | Build claim tx. |
+| --- | --- |
+| `dPayment.settle()` | Build payee settlement transaction. |
+| `dPayment.voluntaryRefund()` | Build payee refund transaction. |
+| `dPayment.prepareRaiseDispute()` | Read arbitration fee and build dispute transaction. |
+| `dPayment.raiseDispute(arbFeeWei)` | Build dispute transaction with caller-supplied fee. |
+| `dPayment.submitEvidence(uri)` | Submit evidence URI. |
+| `dPayment.prepareAppeal(extraData?)` | Read appeal fee/window and build appeal transaction. |
+| `dPayment.appeal(extraData, feeWei)` | Build appeal transaction with caller-supplied fee. |
+| `dPayment.claim()` | Claim queued ETH withdrawal. |
 
-## Event topics
-
-```ts
-import { PaymentTopics } from '@rakelabs/dpayments-sdk';
-```
-
-## PreparedTx shape
-
-Every write method returns a `PreparedTx`:
+## PaymentInfo
 
 ```ts
-{
-  to:         string;   // contract address
-  data:       string;   // calldata (0x-prefixed)
-  value:      string;   // ETH in wei (decimal string)
-  chainId:    number;
-  signerHint?: string;  // human-readable action label
-  preview?:   SigningPreview;  // structured fee breakdown for wallet UI
+interface PaymentInfo {
+  paymentAddress: string;
+  state: PaymentState;
+  payer: string;
+  payee: string;
+  token: string;
+  amount: bigint;
+  settlementTime: bigint;
+  disputeId: bigint;
+  disputeStartTime: bigint;
+  arbitratorAddress: string;
+  arbitratorConfiguration: string;
 }
 ```
 
-## Common mistakes
+## PreparedTx
+
+```ts
+interface PreparedTx {
+  to: string;
+  data: string;
+  value: string;
+  chainId: number;
+  signerHint?: string;
+  preview?: SigningPreview;
+}
+```
+
+Send with ethers v6:
+
+```ts
+await signer.sendTransaction({
+  to: tx.to,
+  data: tx.data,
+  value: BigInt(tx.value),
+});
+```
+
+## Events
+
+Factory event:
+
+```ts
+type PaymentCreatedEvent = {
+  paymentId: string;
+  paymentAddress: string;
+  creator: string;
+  payee: string;
+  token: string;
+  amount: bigint;
+  fee: bigint;
+  settlementTime: bigint;
+  logAddress: string;
+  transactionHash?: string;
+};
+```
+
+Payment event union includes:
+
+- `PaymentSettledEvent`
+- `DisputeRaisedEvent`
+- `ResolvedToPayeeEvent`
+- `RefundedToPayerEvent`
+- `PaymentEvidenceEvent`
+
+## Common Mistakes
 
 | Mistake | Fix |
-|---------|-----|
-| Forgot to pass `value` when sending an ETH payment create tx. | Include `value: BigInt(tx.value)` in `sendTransaction`. |
-| Used `createEthPayment` with a `tokenAddress`. | Use `createErc20Payment` for ERC20 tokens. |
-| Skipped ERC20 `approve()` before creating an ERC20 payment. | `prepareCreateErc20Payment` returns an `approveTx`. Send it first. |
-| Called `appealCost` or `appealPeriod` on a non-DISPUTED payment. | Check `info.state === PaymentState.DISPUTED` first. |
-| Passed `tx.value` directly into signers that expect bigint. | Use `BigInt(tx.value)`. |
+| --- | --- |
+| Calling `refund()` on `DPayment`. | Use `voluntaryRefund()`. |
+| Passing `tx.value` directly to ethers v6. | Use `BigInt(tx.value)`. |
+| Approving the ERC20 factory instead of the predicted clone. | Use `prepareCreateErc20Payment()` and send its `approveTx` first. |
+| Treating `paymentId` as the contract address. | Store the deployed `paymentAddress` from `PaymentCreated`. |
+| Settling before `settlementTimeUnixSec`. | Read `PaymentInfo.settlementTime` and compare it to current Unix time. |
+| Calling appeal reads before a ruling exists. | Check state and `appealPeriod.end > 0n`. |

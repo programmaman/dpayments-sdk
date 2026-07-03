@@ -1,139 +1,178 @@
 # @rakelabs/dpayments-sdk
 
-**Add on-chain payments with built-in Kleros arbitration to your product. No blockchain expertise required.**
+Create disputable ETH or ERC20 payments from a TypeScript app. DPayments prepares unsigned transactions for payment creation, settlement, refunds, evidence, disputes, and appeals; your user's wallet remains responsible for signing and broadcasting.
 
-## What is this?
+The SDK never holds private keys and never takes custody of funds.
 
-DPayments is a JavaScript / TypeScript library for holding payments between two parties using Ethereum smart contracts. Think of it as **a programmable payment with a built-in dispute system**:
-
-- A **payer** sends funds (ETH or ERC20) into a smart contract.
-- A **payee** claims the funds after a settlement time, or refunds voluntarily.
-- If the payee does not deliver by the settlement time, the **payer** can raise a **Kleros dispute**, where jurors decide the outcome.
-- Rulings are enforced automatically on-chain.
-
-> **This library never touches your users' money.** It prepares unsigned transactions. Your app hands them to the user's wallet (MetaMask, WalletConnect). The user signs and submits. Your server never holds private keys.
-
-```
-Your app  ──→  dpayments SDK  ──→  unsigned transaction  ──→  User's wallet  ──→  Blockchain
-              (prepares it)       (just instructions)         (signs it)         (executes it)
+```text
+Your app -> DPayments SDK -> unsigned transaction -> user wallet -> blockchain
 ```
 
-## Installation
+## Install
 
 ```bash
 npm install @rakelabs/dpayments-sdk ethers
 ```
 
-> Requires **ethers v6**. ethers v5 is not compatible.
+Requirements:
 
-## Payment lifecycle
+- Node.js 20+
+- ethers v6
+- an EIP-1193 wallet provider, JSON-RPC provider, or compatible ethers provider
 
-The lifecycle covers payment, settlement, and optional dispute resolution. If the payee fails to deliver or the parties disagree, the payer can escalate to dispute resolution before settlement finalizes.
+## What You Build With It
 
-## Quick start
+Use this package when a payer should fund a payment now, but the payee should only claim it after a settlement time:
 
-```ts
-import { DPayments } from '@rakelabs/dpayments-sdk';
-import { BrowserProvider } from 'ethers';
+- the payer creates and funds the payment,
+- the payee settles after the settlement time,
+- the payee can voluntarily refund the payer,
+- the payer can raise a Kleros dispute before settlement if delivery fails,
+- evidence and appeal transactions can be prepared from the same bound payment handle.
 
-const provider    = new BrowserProvider(window.ethereum);
-await provider.send('eth_requestAccounts', []);
-const signer      = await provider.getSigner();
-const myAddress   = await signer.getAddress();
+Every write method returns a `PreparedTx` with a `preview` field. Show that preview before asking a user to sign.
 
-// One line. Chain and factory address are auto-detected.
-const dpayments = await DPayments.fromProvider(provider, myAddress);
-```
-
-## Happy path: ETH payment in 4 steps
+## Quick Start
 
 ```ts
+import { BrowserProvider, ethers } from 'ethers';
 import { DPayments } from '@rakelabs/dpayments-sdk';
-import { BrowserProvider } from 'ethers';
 
-// ─── Setup ────────────────────────────────────────────────────────────────────
-
-const provider    = new BrowserProvider(window.ethereum);
+const provider = new BrowserProvider(window.ethereum);
 await provider.send('eth_requestAccounts', []);
-const signer      = await provider.getSigner();
-const payerWallet = await signer.getAddress();
 
-const dpayments = await DPayments.fromProvider(provider, payerWallet);
+const signer = await provider.getSigner();
+const payerAddress = await signer.getAddress();
 
-const payeeAddress = '0xPAYEE_WALLET_ADDRESS';
+const dpayments = await DPayments.fromProvider(provider, payerAddress);
 
-// ─── Step 1: Create and fund the payment ─────────────────────────────────────
-//
-// prepareCreateEthPayment quotes the fee and builds the transaction.
-// ETH is sent with the transaction: gross = net + fee.
-// The payment is funded immediately on-chain.
-
-const now      = BigInt(Math.floor(Date.now() / 1000));
-const settleAt = now + 60n; // 60 seconds from now
-
+const settlementTime = BigInt(Math.floor(Date.now() / 1000)) + 3600n;
 const { tx: createTx, paymentId } = await dpayments.factory.prepareCreateEthPayment({
-  netAmount:              ethers.parseEther("0.000001"),
-  payeeAddress,
-  settlementTimeUnixSec:  settleAt,
+  netAmount: ethers.parseEther('0.25'),
+  payeeAddress: '0xPAYEE_ADDRESS',
+  settlementTimeUnixSec: settlementTime,
 });
 
-console.log('Create payment preview:', createTx.preview);
+console.log(createTx.preview);
 
-// ─── Step 2: Find the deployed payment ───────────────────────────────────────
+const createResponse = await signer.sendTransaction({
+  to: createTx.to,
+  data: createTx.data,
+  value: BigInt(createTx.value),
+});
+await createResponse.wait();
 
-const logs   = await dpayments.factory.getLogs(0, 'latest');
-const ourLog = logs.find(e => e.paymentId === paymentId)!;
-const payment = dpayments.dPayment(ourLog.paymentAddress);
+const created = (await dpayments.factory.getLogs(0, 'latest'))
+  .find((event) => event.paymentId === paymentId);
 
-// ─── Step 3: Wait for settlement, then payee claims ─────────────────────────
+if (!created) {
+  throw new Error('Payment creation event was not found');
+}
 
-//   await payeeSigner.sendTransaction(payment.settle());
-
-await new Promise(r => setTimeout(r, 61_000));
-await signer.sendTransaction(payment.settle());
-// → Settled
+const payment = dpayments.dPayment(created.paymentAddress);
 ```
 
-> The complete dispute lifecycle (rulings, appeals, and evidence) mirrors the Klescrow escrow pattern. See [docs/disputes.md](docs/disputes.md).
+## Common Flows
 
-## Decoding revert errors
+### Settle
 
-When a transaction reverts on-chain, MetaMask shows a raw hex code. `decodeDPaymentError` turns it into a readable error name.
+The payee settles after `settlementTimeUnixSec`.
+
+```ts
+const settleTx = payment.settle();
+console.log(settleTx.preview);
+
+await signer.sendTransaction({
+  to: settleTx.to,
+  data: settleTx.data,
+  value: BigInt(settleTx.value),
+});
+```
+
+### Refund
+
+The payee can voluntarily refund before settlement.
+
+```ts
+const refundTx = payment.voluntaryRefund();
+await signer.sendTransaction({
+  to: refundTx.to,
+  data: refundTx.data,
+  value: BigInt(refundTx.value),
+});
+```
+
+### Raise a Dispute
+
+`prepareRaiseDispute()` reads the current Kleros arbitration cost and includes it as the transaction value.
+
+```ts
+const { tx: disputeTx, arbFeeWei } = await payment.prepareRaiseDispute();
+
+console.log('Arbitration fee:', arbFeeWei.toString());
+console.log(disputeTx.preview);
+
+await signer.sendTransaction({
+  to: disputeTx.to,
+  data: disputeTx.data,
+  value: BigInt(disputeTx.value),
+});
+```
+
+### Submit Evidence
+
+Evidence is usually an `ipfs://...` URI produced by `@rakelabs/evidence-publisher`.
+
+```ts
+const evidenceTx = payment.submitEvidence('ipfs://QmYourEvidenceDocument');
+await signer.sendTransaction({
+  to: evidenceTx.to,
+  data: evidenceTx.data,
+  value: BigInt(evidenceTx.value),
+});
+```
+
+## ETH vs ERC20
+
+For ETH payments, the SDK includes the required ETH value in the prepared transaction.
+
+For ERC20 payments, use `prepareCreateErc20Payment(...)` with the token address and handle token allowance before creating the payment.
+
+## Errors
+
+Use `decodeDPaymentError` to turn raw revert data into a readable contract error.
 
 ```ts
 import { decodeDPaymentError } from '@rakelabs/dpayments-sdk';
 
 try {
-  await signer.sendTransaction({ ...tx, value: BigInt(tx.value) });
+  await signer.sendTransaction({
+    to: tx.to,
+    data: tx.data,
+    value: BigInt(tx.value),
+  });
 } catch (err) {
   const decoded = decodeDPaymentError(err);
-
   if (decoded && 'error' in decoded) {
-    // "InvalidState", "NotPayer", "BadEthValue" …
-    showToast(`Transaction reverted: ${decoded.error}`);
-    console.log('Args:', decoded.args); // { sent: 100n, expectedMin: 200n }
-  } else if (decoded && 'raw' in decoded) {
-    // Unrecognized revert: surface the hex
-    console.warn('Unknown revert:', decoded.raw);
+    console.error(decoded.error, decoded.args);
   }
-  // decoded === null → not a contract revert (network error, user rejected, etc.)
 }
 ```
 
-Full reference: [docs/error-decoder.md](docs/error-decoder.md).
+## Documentation
 
-## Further reading
+| Document | Use it for |
+| --- | --- |
+| [docs/reference.md](docs/reference.md) | API reference, types, actions, events, and common mistakes |
+| [docs/disputes.md](docs/disputes.md) | Dispute, evidence, ruling, and appeal lifecycle |
+| [docs/error-decoder.md](docs/error-decoder.md) | Revert decoding details |
+| [docs/advanced.md](docs/advanced.md) | Reader, transaction builder, multicall, and implementation selection |
+| [docs/on-chain.md](docs/on-chain.md) | Contract-level behavior and event model |
 
-| Doc | Content |
-|-----|---------|
-| [docs/disputes.md](docs/disputes.md) | Raising disputes, evidence, appeals, and rulings |
-| [docs/reference.md](docs/reference.md) | Every action, type, event topic, and common mistake |
-| [docs/error-decoder.md](docs/error-decoder.md) | `decodeDPaymentError` reference and all error types |
-| [docs/advanced.md](docs/advanced.md) | Transaction builder, reader, multicall, implementation selection |
+## Safety Notes
 
-
-## Smart Contract Disclosure
-
-**This software deploys autonomous, immutable contracts. The author has zero administrative control over your balance or deployed contract. Every transaction includes a human-readable preview -- check it before signing to verify exactly what you are approving. Please be careful when transacting with others. Users interact with this software entirely at their own risk.**
-
----
+- Always show `tx.preview` before requesting a signature.
+- Store the payment contract address after creation; it is the canonical on-chain handle.
+- Treat settlement times as Unix seconds.
+- Check chain IDs and contract addresses before sending transactions.
+- This software interacts with autonomous contracts. Users transact at their own risk.

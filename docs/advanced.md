@@ -1,201 +1,256 @@
-# Advanced
+# Advanced Guide
 
-Power-user features not covered in the happy path.
+This guide covers direct builders, readers, implementation pinning, multicall, event indexing, ERC20 sequencing, and wallet-library adapters.
 
-## Using the transaction builder directly
+## Choose the Right Layer
 
-The `PaymentTxBuilder` is the stateless core. It encodes calldata from typed parameters and returns a `PreparedTx`. Use it directly if you don't need the high-level `DPayments` facade.
+| Layer | Use when |
+| --- | --- |
+| `DPayments` facade | You want deployment lookup, prepare helpers, bound payment handles, and fewer manual steps. |
+| `PaymentReader` | You only need chain reads. |
+| `PaymentTxBuilder` | You already have fee/address data and only need calldata encoding. |
+| `PaymentEvents` | You are indexing raw logs yourself. |
+
+Most apps should use:
 
 ```ts
-import { PaymentTxBuilder } from '@rakelabs/dpayments-sdk';
-
-const builder = new PaymentTxBuilder();
-
-const cfg = { chainId: 11155111, factoryAddress: '0x...' };
-
-// Create an ETH payment
-const tx = builder.createEthPayment(cfg, {
-  callerWallet:           '0xUSER...',
-  paymentId:              '0x' + '22'.repeat(32),
-  payeeAddress:           '0xPAYEE...',
-  amount:                 1_000_000n,
-  fee:                    25_000n,
-  settlementTimeUnixSec:  BigInt(Math.floor(Date.now() / 1000) + 86400),
-});
-
-console.log(`total value: ${tx.value} wei`);
-
-// Create an ERC20 payment (value = 0, payer approves separately)
-const erc20Tx = builder.createErc20Payment(cfg, {
-  callerWallet:           '0xUSER...',
-  paymentId:              '0x' + '33'.repeat(32),
-  payeeAddress:           '0xPAYEE...',
-  tokenAddress:           '0xUSDC...',
-  amount:                 1_000_000n,
-  fee:                    25_000n,
-  settlementTimeUnixSec:  BigInt(Math.floor(Date.now() / 1000) + 86400),
-});
+const dpayments = await DPayments.fromProvider(provider, walletAddress);
+const { tx } = await dpayments.factory.prepareCreateEthPayment(params);
+const payment = dpayments.dPayment('0xPAYMENT_ADDRESS');
 ```
 
-### Builder methods
-
-| Method | Description |
-|--------|-------------|
-| `createEthPayment(cfg, params)` | ETH payment create tx. Value = gross. |
-| `createErc20Payment(cfg, params)` | ERC20 payment create tx. Value = 0. |
-| `settle(cfg, params)` | Payee claims after settlementTime. |
-| `voluntaryRefund(cfg, params)` | Payee refunds before settlement. |
-| `raiseDispute(cfg, params)` | Payer raises a Kleros dispute. |
-| `submitEvidence(cfg, params)` | Submit evidence URI. |
-| `appeal(cfg, params)` | Appeal a ruling. |
-| `claim(cfg, params)` | Claim pull-payment fallback. |
-| `erc20Approve(cfg, params)` | ERC20 approve for payment creation. |
-
-With pinned implementation:
+## Explicit Config
 
 ```ts
-const tx = builder.createEthPayment(cfg, {
-  ...params,
-  impl: '0xPINNED_IMPL_ADDRESS',
-});
-```
-
-## Using the reader directly
-
-`PaymentReader` performs raw `eth_call` reads. Use it when you don't want the `DPayments` facade.
-
-```ts
-import { PaymentReader } from '@rakelabs/dpayments-sdk';
-import { JsonRpcProvider } from 'ethers';
-
-const reader = new PaymentReader(new JsonRpcProvider('...'));
-
-const config = await reader.readFactory('0xFACTORY...');
-const info   = await reader.readPayment('0xPAYMENT...');
-const quote  = await reader.quoteGross('0xFACTORY...', 1_000_000n);
-const addr   = await reader.predictPaymentAddress('0xFACTORY...', creator, req);
-```
-
-## Implementation selection
-
-The factory supports multiple payment implementations. List and pin them:
-
-```ts
-// List all registered implementations
-const impls = await dpayments.factory.listImplementations();
-// → [{ address: '0x...', name: 'DisputablePayment v1' }, ...]
-
-// Pin a specific implementation:
 const dpayments = new DPayments({
-  chainId:        11155111,
-  factoryAddress: '0x...',
+  chainId: 11155111,
+  factoryAddress: '0xFACTORY_ADDRESS',
   provider,
-  impl:            impls[0], // pin to the first registered impl
-});
-
-// Or pass to fromProvider:
-const dpayments = await DPayments.fromProvider(provider, address, impls[1]);
-```
-
-## Multicall (batching)
-
-Pass a `multicall` config to reduce RPC calls from 8+ parallel to 1 batched call for `readPayment`
-and `readFactory`. Uses the Multicall3 contract at the configured address.
-
-```ts
-const dpayments = await DPayments.fromProvider(provider, address, undefined, {
+  walletAddress,
   multicall: {
-    address: '0xcA11bde05977b3631167028862bE2a173976CA11', // Multicall3 on mainnet
+    address: '0xcA11bde05977b3631167028862bE2a173976CA11',
   },
 });
+```
 
-// All subsequent readPayment / readFactory calls will use a single multicall batch.
-const info = await dpayments.dPayment('0xPAYMENT...').read();
+Use explicit config for custom deployments, tests, backends, or when you need multicall and implementation pinning.
+
+## ERC20 Creation Sequence
+
+Use `prepareCreateErc20Payment()` for normal app code. It quotes the protocol fee, predicts the payment clone, and builds both transactions.
+
+```ts
+const {
+  approveTx,
+  createTx,
+  paymentId,
+  predictedAddress,
+  gross,
+} = await dpayments.factory.prepareCreateErc20Payment({
+  tokenAddress: '0xTOKEN_ADDRESS',
+  netAmount: 1_000_000n,
+  payeeAddress: '0xPAYEE_ADDRESS',
+  settlementTimeUnixSec: BigInt(Math.floor(Date.now() / 1000) + 86400),
+});
+
+await signer.sendTransaction({
+  to: approveTx.to,
+  data: approveTx.data,
+  value: BigInt(approveTx.value),
+});
+
+await signer.sendTransaction({
+  to: createTx.to,
+  data: createTx.data,
+  value: BigInt(createTx.value),
+});
+```
+
+The ERC20 approval spender is the predicted payment clone, not the factory.
+
+## Implementation Pinning
+
+Factories can register multiple payment implementations. Pin an implementation when you need deterministic behavior across a product release.
+
+```ts
+const impls = await dpayments.factory.listImplementations();
+
+const pinned = new DPayments({
+  chainId: 11155111,
+  factoryAddress: '0xFACTORY_ADDRESS',
+  provider,
+  walletAddress,
+  impl: impls[0],
+});
+```
+
+You can also resolve by name or address through `fromProvider()`:
+
+```ts
+const dpayments = await DPayments.fromProvider(
+  provider,
+  walletAddress,
+  'DisputablePayment',
+);
+```
+
+## Multicall Reads
+
+Add Multicall3 to batch `readPayment()` and `readFactory()` internals.
+
+```ts
+const dpayments = await DPayments.fromProvider(
+  provider,
+  walletAddress,
+  undefined,
+  {
+    address: '0xcA11bde05977b3631167028862bE2a173976CA11',
+  },
+);
+
+const info = await dpayments.dPayment('0xPAYMENT_ADDRESS').read();
 const config = await dpayments.factory.readConfig();
 ```
 
-## Event log filtering
+Only configure multicall for chains where the address is deployed.
 
-Use `PaymentEvents` to decode raw EVM logs:
+## Direct Transaction Builder
+
+`PaymentTxBuilder` is stateless. It does not quote fees, predict addresses, resolve deployments, or read chain state.
 
 ```ts
-import { PaymentEvents, TOPIC_PAYMENT_CREATED } from '@rakelabs/dpayments-sdk';
+import { IdGenerator, PaymentTxBuilder } from '@rakelabs/dpayments-sdk';
+
+const builder = new PaymentTxBuilder();
+const cfg = { chainId: 11155111, factoryAddress: '0xFACTORY_ADDRESS' };
+
+const tx = builder.createEthPayment(cfg, {
+  callerWallet: '0xPAYER_ADDRESS',
+  paymentId: IdGenerator.generateOnChainIdHex(),
+  payeeAddress: '0xPAYEE_ADDRESS',
+  amount: 1_000_000n,
+  fee: 25_000n,
+  settlementTimeUnixSec: BigInt(Math.floor(Date.now() / 1000) + 86400),
+});
+```
+
+Builder methods:
+
+| Method | Description |
+| --- | --- |
+| `createEthPayment(cfg, params)` | Build ETH create transaction. |
+| `createErc20Payment(cfg, params)` | Build ERC20 create transaction. |
+| `erc20Approve(cfg, params)` | Build ERC20 approval transaction. |
+| `settle(cfg, params)` | Build payee settlement transaction. |
+| `voluntaryRefund(cfg, params)` | Build payee refund transaction. |
+| `raiseDispute(cfg, params)` | Build dispute transaction with supplied arbitration fee. |
+| `submitEvidence(cfg, params)` | Build evidence submission transaction. |
+| `appeal(cfg, params)` | Build appeal transaction with supplied appeal fee. |
+| `claim(cfg, params)` | Build queued ETH claim transaction. |
+
+## Direct Reader
+
+```ts
+import { JsonRpcProvider } from 'ethers';
+import { PaymentReader } from '@rakelabs/dpayments-sdk';
+
+const reader = new PaymentReader(new JsonRpcProvider(process.env.RPC_URL));
+
+const config = await reader.readFactory('0xFACTORY_ADDRESS');
+const payment = await reader.readPayment('0xPAYMENT_ADDRESS');
+const quote = await reader.quoteGross('0xFACTORY_ADDRESS', 1_000_000n);
+```
+
+Use direct readers for dashboards, monitoring jobs, backends, and services that should never prepare transactions.
+
+## Event Indexing
+
+For common app history:
+
+```ts
+const byPayer = await dpayments.factory.getLogsByParty('payer', payerAddress);
+const byPayee = await dpayments.factory.getLogsByPayee(payeeAddress);
+const history = await dpayments.dPayment('0xPAYMENT_ADDRESS').getLogs();
+```
+
+For custom indexers:
+
+```ts
+import { PaymentEvents, PaymentTopics } from '@rakelabs/dpayments-sdk';
 
 const events = new PaymentEvents();
-
 const rawLogs = await provider.getLogs({
-  address:   factoryAddress,
-  topics:    [TOPIC_PAYMENT_CREATED],
+  address: factoryAddress,
+  topics: [PaymentTopics.PAYMENT_CREATED],
   fromBlock: 0,
-  toBlock:   'latest',
+  toBlock: 'latest',
 });
 
 for (const log of rawLogs) {
   const decoded = events.tryDecodePaymentCreated({
     address: log.address,
-    topics: log.topics as string[],
+    topics: log.topics,
     data: log.data,
     transactionHash: log.transactionHash,
   });
   if (decoded) {
-    console.log(`Payment ${decoded.paymentId} → ${decoded.paymentAddress}`);
-    console.log(`  creator=${decoded.creator}  payee=${decoded.payee}  amount=${decoded.amount}`);
+    console.log(decoded.paymentId, decoded.paymentAddress);
   }
 }
 ```
 
-## Evidence timeline
+## Evidence Logs
 
-The `getEvidenceLogs` method enriches each evidence event with the block timestamp:
+Payment evidence logs are decoded but not timestamp-enriched.
 
 ```ts
-const timeline = await dPayment.getEvidenceLogs(0, 'latest');
+const evidence = await dpayments.dPayment('0xPAYMENT_ADDRESS')
+  .getEvidenceLogs(0, 'latest');
 
-for (const ev of timeline) {
-  console.log(`${ev.submittedAt.toLocaleString()}`);
-  console.log(`  Party:  ${ev.party}`);
-  console.log(`  URI:    ${ev.evidenceUri}`);
-  console.log(`  Block:  ${ev.blockNumber}`);
+for (const event of evidence) {
+  console.log(event.party, event.evidenceUri, event.transactionHash);
 }
 ```
 
-## PreparedTx previews
+If you need timestamps, fetch block metadata for each event's block from your indexer or provider.
 
-Every transaction includes a `preview` field with a structured fee breakdown and human-readable labels. Use it for wallet confirmation screens:
+## Wallet Library Adapters
+
+ethers v6:
 
 ```ts
-const { tx } = await dpayments.factory.prepareCreateEthPayment(params);
-
-console.log(tx.preview);
-// {
-//   action: 'Create ETH Payment',
-//   signer: 'payer',
-//   description: 'Deploy a new payment contract and fund it with ETH.',
-//   valueWei: '1025000',
-//   fees: {
-//     token: '0x0000…0000',
-//     items: [
-//       { label: 'Net amount', amountWei: '1000000' },
-//       { label: 'Protocol fee', amountWei: '25000' },
-//     ],
-//     totalFeeWei: '1025000',
-//   },
-//   details: { 'Payment ID': '0x…', 'Payee': '0x…', 'Settlement time': '…' },
-// }
+await signer.sendTransaction({
+  to: tx.to,
+  data: tx.data,
+  value: BigInt(tx.value),
+});
 ```
 
-## ID generation
+wagmi / viem:
 
-Generate globally unique on-chain payment IDs:
+```ts
+await sendTransaction(config, {
+  to: tx.to as `0x${string}`,
+  data: tx.data as `0x${string}`,
+  value: BigInt(tx.value),
+});
+```
+
+Account abstraction:
+
+```ts
+await smartAccount.sendUserOperation({
+  target: tx.to,
+  data: tx.data,
+  value: BigInt(tx.value),
+});
+```
+
+## ID Generation
 
 ```ts
 import { IdGenerator } from '@rakelabs/dpayments-sdk';
 
-// Random bytes32:
-const id = IdGenerator.generateOnChainIdHex();
-// → '0x7f83…a4b1'
-
-// Human-friendly IDs for internal tracking:
-const friendly = IdGenerator.generateFriendlyId('PAY-', 12);
-// → 'PAY-8xK2mPq9RfTv'
+const onChainId = IdGenerator.generateOnChainIdHex();
+const displayId = IdGenerator.generateFriendlyId('PAY-', 12);
 ```
