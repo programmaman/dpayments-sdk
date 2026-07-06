@@ -21,7 +21,7 @@ import { PaymentEvents, TOPIC_PAYMENT_CREATED } from './PaymentEvents.js';
 import { DPayment } from './DPayment.js';
 import { requireAddress, IdGenerator } from './common/index.js';
 import type { MulticallConfig } from './multicall.js';
-import { FACTORY_ADDRESS, getFactoryAddress } from './deployments.js';
+import { getFactoryAddress, requireSupportedChainId } from './deployments.js';
 
 // ─── SDK config ───────────────────────────────────────────────────────────────
 
@@ -424,7 +424,16 @@ export class DPayments {
 
     constructor(config: DPaymentsSdkConfig) {
         const chainId = DPayments._normalizeChainId(config.chainId);
-        const factoryAddress = config.factoryAddress ?? getFactoryAddress(chainId) ?? FACTORY_ADDRESS;
+
+        if (!config.factoryAddress) {
+            requireSupportedChainId(chainId);
+        }
+
+        const factoryAddress = config.factoryAddress ?? getFactoryAddress(chainId);
+        if (!factoryAddress) {
+            throw new Error(`Unsupported chain ID: ${chainId}`);
+        }
+
         requireAddress(factoryAddress, 'factoryAddress');
         this._cfg      = { chainId, factoryAddress };
         this._provider = config.provider;
@@ -508,7 +517,10 @@ export class DPayments {
     ): Promise<DPayments> {
         const { chainId } = await provider.getNetwork();
         const chainIdNumber = DPayments._normalizeChainId(Number(chainId));
-        const factoryAddress = FACTORY_ADDRESS;
+        const factoryAddress = getFactoryAddress(chainIdNumber);
+        if (!factoryAddress) {
+            throw new Error(`Unsupported chain ID: ${chainIdNumber}`);
+        }
 
         let impl: PaymentImplementationInfo | undefined;
         if (implNameOrAddress) {
