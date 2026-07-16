@@ -4,6 +4,8 @@ All notable public changes to `@rakelabs/dpayments-sdk` are documented here.
 
 ## Unreleased
 
+## 0.1.4
+
 ### Added
 
 - Added the ability to retrieve individual payment details, such as status, participants, settlement information, dispute information, and balances, when a complete payment record is unnecessary.
