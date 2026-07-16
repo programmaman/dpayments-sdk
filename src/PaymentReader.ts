@@ -6,8 +6,10 @@ import {
     type PaymentInfo,
     type PaymentImplementationInfo,
     type AppealPeriod,
+    PaymentState,
     paymentStateFromOrdinal,
 } from './types.js';
+import type { PaymentReadable } from './internal/PaymentReadable.js';
 import { type MulticallConfig, type EncodedReadCall, executeMulticall } from './multicall.js';
 import { PaymentFactory__factory, DisputablePayment__factory } from '../generated/typechain/index.js';
 
@@ -21,6 +23,7 @@ const PAYMENT_IFACE = DisputablePayment__factory.createInterface() as unknown as
 /**
  * Stateless reader for on-chain DisputablePayment state via JSON-RPC eth_call.
  *
+ *
  * Accepts any ethers AbstractProvider (JsonRpcProvider, BrowserProvider, etc.).
  * All methods are async and throw if the RPC call fails.
  *
@@ -29,9 +32,30 @@ const PAYMENT_IFACE = DisputablePayment__factory.createInterface() as unknown as
  */
 export class PaymentReader {
     private readonly _multicall?: MulticallConfig;
+    readonly readPayment: PaymentReadable<[paymentAddress: string]>;
 
     constructor(private readonly provider: AbstractProvider, multicallConfig?: MulticallConfig) {
         this._multicall = multicallConfig;
+        this.readPayment = Object.assign(
+            (paymentAddress: string) => this._readPaymentSnapshot(paymentAddress),
+            {
+                state: (paymentAddress: string) => this._readPaymentState(paymentAddress),
+                payer: (paymentAddress: string) => this._readPaymentString(paymentAddress, 'payer'),
+                payee: (paymentAddress: string) => this._readPaymentString(paymentAddress, 'payee'),
+                token: (paymentAddress: string) => this._readPaymentString(paymentAddress, 'token'),
+                amount: (paymentAddress: string) => this._readPaymentBigInt(paymentAddress, 'amount'),
+                settlementTime: (paymentAddress: string) => this._readPaymentBigInt(paymentAddress, 'settlementTime'),
+                disputeId: (paymentAddress: string) => this._readPaymentBigInt(paymentAddress, 'disputeId'),
+                disputeStartTime: (paymentAddress: string) => this._readPaymentBigInt(paymentAddress, 'disputeStartTime'),
+                arbitrator: (paymentAddress: string) => this._readPaymentString(paymentAddress, 'arbitrator'),
+                arbitratorConfiguration: (paymentAddress: string) => this._readPaymentString(paymentAddress, 'arbitratorConfiguration'),
+                arbitrationCost: (paymentAddress: string) => this.readArbitrationCost(paymentAddress),
+                appealCost: (paymentAddress: string) => this.readAppealCost(paymentAddress),
+                appealPeriod: (paymentAddress: string) => this.readAppealPeriod(paymentAddress),
+                pendingWithdrawal: (paymentAddress: string, wallet: string) =>
+                    this.readPendingWithdrawal(paymentAddress, wallet),
+            },
+        );
     }
 
     // ─── Factory reads ────────────────────────────────────────────────────────
@@ -230,7 +254,7 @@ export class PaymentReader {
     /**
      * Reads all on-chain state for a deployed DisputablePayment clone.
      */
-    async readPayment(paymentAddress: string): Promise<PaymentInfo> {
+    private async _readPaymentSnapshot(paymentAddress: string): Promise<PaymentInfo> {
         const addr = requireAddress(paymentAddress, 'paymentAddress');
         return this._multicall
             ? this._readPaymentViaMulticall(addr)
@@ -312,6 +336,29 @@ export class PaymentReader {
             arbitratorAddress:       arbitratorAddress as string,
             arbitratorConfiguration: arbitratorConfiguration as string,
         };
+    }
+
+    private async _readPaymentValue(paymentAddress: string, method: string): Promise<unknown> {
+        const addr = requireAddress(paymentAddress, 'paymentAddress');
+        const raw = await this.provider.call({
+            to: addr,
+            data: PAYMENT_IFACE.encodeFunctionData(method, []),
+        });
+        return PAYMENT_IFACE.decodeFunctionResult(method, raw)[0];
+    }
+
+    private async _readPaymentState(paymentAddress: string): Promise<PaymentState> {
+        return paymentStateFromOrdinal(
+            Number(await this._readPaymentValue(paymentAddress, 'state')),
+        );
+    }
+
+    private async _readPaymentString(paymentAddress: string, method: string): Promise<string> {
+        return await this._readPaymentValue(paymentAddress, method) as string;
+    }
+
+    private async _readPaymentBigInt(paymentAddress: string, method: string): Promise<bigint> {
+        return await this._readPaymentValue(paymentAddress, method) as bigint;
     }
 
     // ─── Single-call reads (not worth batching individually) ──────────────────

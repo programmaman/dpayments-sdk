@@ -3,12 +3,14 @@ import type { PreparedTx } from './common/index.js';
 import type {
     PaymentInfo,
     AppealPeriod,
+    PaymentState,
     PaymentEvent,
     PaymentEvidenceEvent,
     PrepareRaiseDisputeResult,
     PrepareAppealResult,
 } from './types.js';
 import type { PaymentsConfig } from './PaymentTxBuilder.js';
+import type { PaymentReadable } from './internal/PaymentReadable.js';
 import { PaymentReader } from './PaymentReader.js';
 import { PaymentTxBuilder } from './PaymentTxBuilder.js';
 import { PaymentEvents, TOPIC_EVIDENCE } from './PaymentEvents.js';
@@ -26,6 +28,8 @@ import { PaymentEvents, TOPIC_EVIDENCE } from './PaymentEvents.js';
  * in every `PreparedTx` automatically, so callers never have to pass it manually.
  */
 export class DPayment {
+    readonly read: PaymentReadable<[]>;
+
     constructor(
         /** On-chain address of this DisputablePayment clone. */
         readonly address: string,
@@ -35,14 +39,31 @@ export class DPayment {
         private readonly decoder:  PaymentEvents,
         private readonly provider: AbstractProvider,
         private readonly walletAddress?: string,
-    ) {}
+    ) {
+        this.read = Object.assign(
+            () => this.reader.readPayment(this.address),
+            {
+                state: () => this.reader.readPayment.state(this.address),
+                payer: () => this.reader.readPayment.payer(this.address),
+                payee: () => this.reader.readPayment.payee(this.address),
+                token: () => this.reader.readPayment.token(this.address),
+                amount: () => this.reader.readPayment.amount(this.address),
+                settlementTime: () => this.reader.readPayment.settlementTime(this.address),
+                disputeId: () => this.reader.readPayment.disputeId(this.address),
+                disputeStartTime: () => this.reader.readPayment.disputeStartTime(this.address),
+                arbitrator: () => this.reader.readPayment.arbitrator(this.address),
+                arbitratorConfiguration: () =>
+                    this.reader.readPayment.arbitratorConfiguration(this.address),
+                arbitrationCost: () => this.reader.readPayment.arbitrationCost(this.address),
+                appealCost: () => this.reader.readPayment.appealCost(this.address),
+                appealPeriod: () => this.reader.readPayment.appealPeriod(this.address),
+                pendingWithdrawal: (wallet: string) =>
+                    this.reader.readPayment.pendingWithdrawal(this.address, wallet),
+            },
+        );
+    }
 
     // ─── Reads (async, no wallet required) ────────────────────────────────────
-
-    /** Reads all on-chain state for this payment. */
-    read(): Promise<PaymentInfo> {
-        return this.reader.readPayment(this.address);
-    }
 
     /** Current Kleros arbitration cost in wei. */
     arbitrationCost(): Promise<bigint> {
