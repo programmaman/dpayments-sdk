@@ -13,7 +13,7 @@ export type { PaymentsConfig, CreatePaymentParams, PaymentActionParams, RaiseDis
 export { PaymentReader } from './PaymentReader.js';
 
 // ─── Events ─────────────────────────────────────────────────────────────────
-export { PaymentEvents, PaymentTopics, TOPIC_PAYMENT_CREATED, TOPIC_PAYMENT_SETTLED, TOPIC_DISPUTE_RAISED, TOPIC_RESOLVED_TO_PAYEE, TOPIC_REFUNDED_TO_PAYER, TOPIC_EVIDENCE } from './PaymentEvents.js';
+export { PaymentEvents, PaymentTopics, TOPIC_PAYMENT_CREATED, TOPIC_PAYMENT_SETTLED, TOPIC_DISPUTE_RAISED, TOPIC_RESOLVED_TO_PAYEE, TOPIC_REFUNDED_TO_PAYER, TOPIC_CONSUMED, TOPIC_EVIDENCE } from './PaymentEvents.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 export { PaymentState, paymentStateFromOrdinal } from './types.js';
@@ -35,6 +35,7 @@ export type {
     DisputeRaisedEvent,
     ResolvedToPayeeEvent,
     RefundedToPayerEvent,
+    ConsumedEvent,
     PaymentEvidenceEvent,
     PaymentEvent,
 } from './types.js';

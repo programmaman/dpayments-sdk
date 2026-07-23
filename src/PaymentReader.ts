@@ -45,6 +45,7 @@ export class PaymentReader {
                 token: (paymentAddress: string) => this._readPaymentString(paymentAddress, 'token'),
                 amount: (paymentAddress: string) => this._readPaymentBigInt(paymentAddress, 'amount'),
                 settlementTime: (paymentAddress: string) => this._readPaymentBigInt(paymentAddress, 'settlementTime'),
+                consumed: (paymentAddress: string) => this._readPaymentBoolean(paymentAddress, 'consumed'),
                 disputeId: (paymentAddress: string) => this._readPaymentBigInt(paymentAddress, 'disputeId'),
                 disputeStartTime: (paymentAddress: string) => this._readPaymentBigInt(paymentAddress, 'disputeStartTime'),
                 arbitrator: (paymentAddress: string) => this._readPaymentString(paymentAddress, 'arbitrator'),
@@ -266,11 +267,11 @@ export class PaymentReader {
             this.provider.call({ to: addr, data: PAYMENT_IFACE.encodeFunctionData(method, []) });
 
         const [payerRaw, payeeRaw, tokenRaw, amountRaw, stateRaw,
-               settlementTimeRaw, disputeIdRaw, disputeStartTimeRaw,
+               settlementTimeRaw, consumedRaw, disputeIdRaw, disputeStartTimeRaw,
                arbitratorRaw, arbitratorConfigRaw] =
             await Promise.all([
                 call('payer'), call('payee'), call('token'), call('amount'),
-                call('state'), call('settlementTime'), call('disputeId'),
+                call('state'), call('settlementTime'), call('consumed'), call('disputeId'),
                 call('disputeStartTime'), call('arbitrator'),
                 call('arbitratorConfiguration'),
             ]);
@@ -283,6 +284,7 @@ export class PaymentReader {
             amount:          PAYMENT_IFACE.decodeFunctionResult('amount', amountRaw)[0] as bigint,
             state:           paymentStateFromOrdinal(Number(PAYMENT_IFACE.decodeFunctionResult('state', stateRaw)[0])),
             settlementTime:  PAYMENT_IFACE.decodeFunctionResult('settlementTime', settlementTimeRaw)[0] as bigint,
+            consumed:        PAYMENT_IFACE.decodeFunctionResult('consumed', consumedRaw)[0] as boolean,
             disputeId:       PAYMENT_IFACE.decodeFunctionResult('disputeId', disputeIdRaw)[0] as bigint,
             disputeStartTime:PAYMENT_IFACE.decodeFunctionResult('disputeStartTime', disputeStartTimeRaw)[0] as bigint,
             arbitratorAddress:       PAYMENT_IFACE.decodeFunctionResult('arbitrator', arbitratorRaw)[0] as string,
@@ -307,6 +309,7 @@ export class PaymentReader {
             enc('amount'),
             enc('state'),
             enc('settlementTime'),
+            enc('consumed'),
             enc('disputeId'),
             enc('disputeStartTime'),
             enc('arbitrator'),
@@ -319,7 +322,7 @@ export class PaymentReader {
 
         const [
             payer, payee, token, amount, stateOrd,
-            settlementTime, disputeId, disputeStartTime,
+            settlementTime, consumed, disputeId, disputeStartTime,
             arbitratorAddress, arbitratorConfiguration,
         ] = results;
 
@@ -331,6 +334,7 @@ export class PaymentReader {
             amount:          amount as bigint,
             state:           paymentStateFromOrdinal(Number(stateOrd)),
             settlementTime:  settlementTime as bigint,
+            consumed:        consumed as boolean,
             disputeId:       disputeId as bigint,
             disputeStartTime:disputeStartTime as bigint,
             arbitratorAddress:       arbitratorAddress as string,
@@ -359,6 +363,10 @@ export class PaymentReader {
 
     private async _readPaymentBigInt(paymentAddress: string, method: string): Promise<bigint> {
         return await this._readPaymentValue(paymentAddress, method) as bigint;
+    }
+
+    private async _readPaymentBoolean(paymentAddress: string, method: string): Promise<boolean> {
+        return await this._readPaymentValue(paymentAddress, method) as boolean;
     }
 
     // ─── Single-call reads (not worth batching individually) ──────────────────

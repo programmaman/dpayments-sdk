@@ -49,6 +49,7 @@ export class DPayment {
                 token: () => this.reader.readPayment.token(this.address),
                 amount: () => this.reader.readPayment.amount(this.address),
                 settlementTime: () => this.reader.readPayment.settlementTime(this.address),
+                consumed: () => this.reader.readPayment.consumed(this.address),
                 disputeId: () => this.reader.readPayment.disputeId(this.address),
                 disputeStartTime: () => this.reader.readPayment.disputeStartTime(this.address),
                 arbitrator: () => this.reader.readPayment.arbitrator(this.address),
@@ -100,6 +101,14 @@ export class DPayment {
     /** Payee voluntarily refunds the payer before settlement. */
     voluntaryRefund(wallet?: string): PreparedTx {
         return this.builder.voluntaryRefund(this.cfg, {
+            callerWallet:  this.resolveWallet(wallet),
+            paymentAddress: this.address,
+        });
+    }
+
+    /** Payee marks the payment as consumed without settling the funds. */
+    consume(wallet?: string): PreparedTx {
+        return this.builder.consume(this.cfg, {
             callerWallet:  this.resolveWallet(wallet),
             paymentAddress: this.address,
         });
@@ -197,6 +206,7 @@ export class DPayment {
                 ?? this.decoder.tryDecodeDisputeRaised(evmLog)
                 ?? this.decoder.tryDecodeResolvedToPayee(evmLog)
                 ?? this.decoder.tryDecodeRefundedToPayer(evmLog)
+                ?? this.decoder.tryDecodeConsumed(evmLog)
                 ?? this.decoder.tryDecodeEvidence(evmLog);
             return decoded ? [decoded] : [];
         });

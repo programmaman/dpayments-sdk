@@ -12,6 +12,7 @@ export interface PaymentReadable<PaymentArgs extends [] | [paymentAddress: strin
     token(...args: PaymentArgs): Promise<string>;
     amount(...args: PaymentArgs): Promise<bigint>;
     settlementTime(...args: PaymentArgs): Promise<bigint>;
+    consumed(...args: PaymentArgs): Promise<boolean>;
     disputeId(...args: PaymentArgs): Promise<bigint>;
     disputeStartTime(...args: PaymentArgs): Promise<bigint>;
     arbitrator(...args: PaymentArgs): Promise<string>;

@@ -54,6 +54,8 @@ export interface PaymentInfo {
     amount: bigint;
     /** Unix timestamp (seconds) when payee can claim */
     settlementTime: bigint;
+    /** Whether the payee has marked this payment as consumed. */
+    consumed: boolean;
     disputeId: bigint;
     disputeStartTime: bigint;
     /** Kleros arbitrator address snapshotted at payment initialization. */
@@ -215,6 +217,12 @@ export interface PaymentEvidenceEvent {
     transactionHash: string | undefined;
 }
 
+/** Decoded DisputablePayment.Consumed event. */
+export interface ConsumedEvent {
+    logAddress: string;
+    transactionHash: string | undefined;
+}
+
 /** Union of all payment event types (for convenience when iterating). */
 export type PaymentEvent =
     | PaymentCreatedEvent
@@ -222,4 +230,5 @@ export type PaymentEvent =
     | DisputeRaisedEvent
     | ResolvedToPayeeEvent
     | RefundedToPayerEvent
+    | ConsumedEvent
     | PaymentEvidenceEvent;

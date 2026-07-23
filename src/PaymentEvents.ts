@@ -6,6 +6,7 @@ import type {
     DisputeRaisedEvent,
     ResolvedToPayeeEvent,
     RefundedToPayerEvent,
+    ConsumedEvent,
     PaymentEvidenceEvent,
 } from './types.js';
 import { PaymentFactory__factory, DisputablePayment__factory } from '../generated/typechain/index.js';
@@ -27,6 +28,8 @@ export const TOPIC_DISPUTE_RAISED   = ethersId('DisputeRaised(uint256,address)')
 export const TOPIC_RESOLVED_TO_PAYEE = ethersId('ResolvedToPayee(address,uint256)');
 /** Topic0 for DisputablePayment.RefundedToPayer */
 export const TOPIC_REFUNDED_TO_PAYER = ethersId('RefundedToPayer(address,uint256)');
+/** Topic0 for DisputablePayment.Consumed */
+export const TOPIC_CONSUMED          = ethersId('Consumed()');
 /** Topic0 for IEvidence.Evidence emitted by a payment clone */
 export const TOPIC_EVIDENCE          = ethersId('Evidence(address,uint256,address,string)');
 
@@ -44,6 +47,7 @@ export const PaymentTopics = {
     DISPUTE_RAISED:    TOPIC_DISPUTE_RAISED,
     RESOLVED_TO_PAYEE: TOPIC_RESOLVED_TO_PAYEE,
     REFUNDED_TO_PAYER: TOPIC_REFUNDED_TO_PAYER,
+    CONSUMED:          TOPIC_CONSUMED,
     EVIDENCE:          TOPIC_EVIDENCE,
 } as const;
 
@@ -139,6 +143,16 @@ export class PaymentEvents {
             payer:           parsed.args.payer as string,
             paid:            parsed.args.paid  as bigint,
             logAddress:      log.address,
+            transactionHash: log.transactionHash,
+        };
+    }
+
+    /** Tries to decode a DisputablePayment.Consumed log. */
+    tryDecodeConsumed(log: EvmLog): ConsumedEvent | undefined {
+        if (!matchesTopic(log, TOPIC_CONSUMED)) return undefined;
+        paymentIface.parseLog({ topics: log.topics, data: log.data });
+        return {
+            logAddress: log.address,
             transactionHash: log.transactionHash,
         };
     }

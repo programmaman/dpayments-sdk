@@ -69,6 +69,8 @@ const ERROR_IFACE = new Interface([
   'error NothingToClaim()',
   'error ClaimFailed()',
   'error AppealWindowNotOpen()',
+  'error Unauthorized()',
+  'error AlreadyConsumed()',
   'error InvalidPaymentId()',
   'error InvalidToken()',
   'error InvalidAmount()',

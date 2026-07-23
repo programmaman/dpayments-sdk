@@ -204,6 +204,15 @@ export class PaymentTxBuilder {
         });
     }
 
+    /** Payee marks the payment as consumed without changing its settlement state. */
+    consume(cfg: PaymentsConfig, p: PaymentActionParams): PreparedTx {
+        return this.simpleCall(cfg, p, 'consume', 'Consume Payment', {
+            signer: 'payee',
+            description: 'Mark the payment as consumed without settling or changing dispute authority.',
+            details: { 'Payment': p.paymentAddress },
+        });
+    }
+
     // ─── Clone: dispute / evidence / appeal ────────────────────────────────
 
     /** Build an unsigned raiseDispute transaction. */

@@ -34,6 +34,8 @@ export interface DisputablePaymentInterface extends Interface {
       | "arbitrator"
       | "arbitratorConfiguration"
       | "claim"
+      | "consume"
+      | "consumed"
       | "dispute"
       | "disputeId"
       | "disputeStartTime"
@@ -52,6 +54,7 @@ export interface DisputablePaymentInterface extends Interface {
 
   getEvent(
     nameOrSignatureOrTopic:
+      | "Consumed"
       | "Dispute"
       | "DisputeRaised"
       | "Evidence"
@@ -86,6 +89,8 @@ export interface DisputablePaymentInterface extends Interface {
     values?: undefined
   ): string;
   encodeFunctionData(functionFragment: "claim", values?: undefined): string;
+  encodeFunctionData(functionFragment: "consume", values?: undefined): string;
+  encodeFunctionData(functionFragment: "consumed", values?: undefined): string;
   encodeFunctionData(functionFragment: "dispute", values?: undefined): string;
   encodeFunctionData(functionFragment: "disputeId", values?: undefined): string;
   encodeFunctionData(
@@ -146,6 +151,8 @@ export interface DisputablePaymentInterface extends Interface {
     data: BytesLike
   ): Result;
   decodeFunctionResult(functionFragment: "claim", data: BytesLike): Result;
+  decodeFunctionResult(functionFragment: "consume", data: BytesLike): Result;
+  decodeFunctionResult(functionFragment: "consumed", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "dispute", data: BytesLike): Result;
   decodeFunctionResult(functionFragment: "disputeId", data: BytesLike): Result;
   decodeFunctionResult(
@@ -175,6 +182,16 @@ export interface DisputablePaymentInterface extends Interface {
     functionFragment: "voluntaryRefund",
     data: BytesLike
   ): Result;
+}
+
+export namespace ConsumedEvent {
+  export type InputTuple = [];
+  export type OutputTuple = [];
+  export interface OutputObject {}
+  export type Event = TypedContractEvent<InputTuple, OutputTuple, OutputObject>;
+  export type Filter = TypedDeferredTopicFilter<Event>;
+  export type Log = TypedEventLog<Event>;
+  export type LogDescription = TypedLogDescription<Event>;
 }
 
 export namespace DisputeEvent {
@@ -389,6 +406,10 @@ export interface DisputablePayment extends BaseContract {
 
   claim: TypedContractMethod<[], [void], "nonpayable">;
 
+  consume: TypedContractMethod<[], [void], "nonpayable">;
+
+  consumed: TypedContractMethod<[], [boolean], "view">;
+
   dispute: TypedContractMethod<[], [void], "payable">;
 
   disputeId: TypedContractMethod<[], [bigint], "view">;
@@ -473,6 +494,12 @@ export interface DisputablePayment extends BaseContract {
     nameOrSignature: "claim"
   ): TypedContractMethod<[], [void], "nonpayable">;
   getFunction(
+    nameOrSignature: "consume"
+  ): TypedContractMethod<[], [void], "nonpayable">;
+  getFunction(
+    nameOrSignature: "consumed"
+  ): TypedContractMethod<[], [boolean], "view">;
+  getFunction(
     nameOrSignature: "dispute"
   ): TypedContractMethod<[], [void], "payable">;
   getFunction(
@@ -530,6 +557,13 @@ export interface DisputablePayment extends BaseContract {
     nameOrSignature: "voluntaryRefund"
   ): TypedContractMethod<[], [void], "nonpayable">;
 
+  getEvent(
+    key: "Consumed"
+  ): TypedContractEvent<
+    ConsumedEvent.InputTuple,
+    ConsumedEvent.OutputTuple,
+    ConsumedEvent.OutputObject
+  >;
   getEvent(
     key: "Dispute"
   ): TypedContractEvent<
@@ -595,6 +629,17 @@ export interface DisputablePayment extends BaseContract {
   >;
 
   filters: {
+    "Consumed()": TypedContractEvent<
+      ConsumedEvent.InputTuple,
+      ConsumedEvent.OutputTuple,
+      ConsumedEvent.OutputObject
+    >;
+    Consumed: TypedContractEvent<
+      ConsumedEvent.InputTuple,
+      ConsumedEvent.OutputTuple,
+      ConsumedEvent.OutputObject
+    >;
+
     "Dispute(address,uint256,uint256,uint256)": TypedContractEvent<
       DisputeEvent.InputTuple,
       DisputeEvent.OutputTuple,

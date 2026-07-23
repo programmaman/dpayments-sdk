@@ -123,6 +123,7 @@ type PrepareCreateErc20Result = {
 | `reader.readPayment.token(address)` | Token address (`ZeroAddress` for ETH) |
 | `reader.readPayment.amount(address)` | Net amount as `bigint` |
 | `reader.readPayment.settlementTime(address)` | Unix settlement time as `bigint` |
+| `reader.readPayment.consumed(address)` | Whether the payee has consumed the payment |
 | `reader.readPayment.disputeId(address)` | Dispute ID as `bigint` |
 | `reader.readPayment.disputeStartTime(address)` | Dispute start time as `bigint` |
 | `reader.readPayment.arbitrator(address)` | Arbitrator address |
@@ -138,6 +139,7 @@ type PrepareCreateErc20Result = {
 | `dPayment.read.token()` | Token address (`ZeroAddress` for ETH) |
 | `dPayment.read.amount()` | Net amount as `bigint` |
 | `dPayment.read.settlementTime()` | Unix settlement time as `bigint` |
+| `dPayment.read.consumed()` | Whether the payee has consumed the payment |
 | `dPayment.read.disputeId()` | Dispute ID as `bigint` |
 | `dPayment.read.disputeStartTime()` | Dispute start time as `bigint` |
 | `dPayment.read.arbitrator()` | Arbitrator address |
@@ -159,6 +161,7 @@ type PrepareCreateErc20Result = {
 | --- | --- |
 | `dPayment.settle()` | Build payee settlement transaction. |
 | `dPayment.voluntaryRefund()` | Build payee refund transaction. |
+| `dPayment.consume()` | Build payee consumption-marker transaction. |
 | `dPayment.prepareRaiseDispute()` | Read arbitration fee and build dispute transaction. |
 | `dPayment.raiseDispute(arbFeeWei)` | Build dispute transaction with caller-supplied fee. |
 | `dPayment.submitEvidence(uri)` | Submit evidence URI. |
@@ -177,6 +180,7 @@ interface PaymentInfo {
   token: string;
   amount: bigint;
   settlementTime: bigint;
+  consumed: boolean;
   disputeId: bigint;
   disputeStartTime: bigint;
   arbitratorAddress: string;
@@ -232,6 +236,7 @@ Payment event union includes:
 - `DisputeRaisedEvent`
 - `ResolvedToPayeeEvent`
 - `RefundedToPayerEvent`
+- `ConsumedEvent`
 - `PaymentEvidenceEvent`
 
 ## Common Mistakes
