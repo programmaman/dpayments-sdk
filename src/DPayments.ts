@@ -1,4 +1,3 @@
-import type { AbstractProvider } from 'ethers';
 import type { PreparedTx } from './common/index.js';
 import type {
     FactoryInfo,
@@ -22,95 +21,73 @@ import { DPayment } from './DPayment.js';
 import { requireAddress, IdGenerator } from './common/index.js';
 import type { MulticallConfig } from './multicall.js';
 import { getFactoryAddress, requireSupportedChainId } from './deployments.js';
-
-// ─── SDK config ───────────────────────────────────────────────────────────────
+import type { ReadBlockReference, RpcClient } from './common/index.js';
+import type { AbiCodec } from './common/AbiCodec.js';
+import { decodeRpcChainId, ethGetLogs } from './internal/rpc.js';
 
 export interface DPaymentsSdkConfig {
     chainId: number;
-    /** Defaults to the replayed DPayments factory address. */
+    /** Factory override; defaults to the deployed address for `chainId`. */
     factoryAddress?: string;
-    /** ethers AbstractProvider (JsonRpcProvider, BrowserProvider, …). */
-    provider: AbstractProvider;
-    /**
-     * Current user's wallet address.
-     * When set, all write operations pre-fill `callerWallet` automatically.
-     * Can still be overridden per-call.
-     */
+    rpcClient: RpcClient;
+    codec: AbiCodec;
+    /** Block context for reads; defaults to `latest`. */
+    readBlock?: ReadBlockReference;
+    /** Default wallet for write helpers; can be overridden per call. */
     walletAddress?: string;
-    /**
-     * Optional Multicall3 configuration.
-     * When set, `readPayment` and `readFactory` batch all their eth_calls into a
-     * single `aggregate3` request, reducing RPC round-trips significantly.
-     *
-     * The canonical Multicall3 address on most EVM chains is:
-     * `0xcA11bde05977b3631167028862bE2a173976CA11`
-     *
-     * Omit to keep the default parallel-Promise.all behaviour.
-     */
+    /** Optional Multicall3 batching for reads. */
     multicall?: MulticallConfig;
-    /**
-     * Optional payment implementation to pin.
-     *
-     * Omit (or set undefined) to use the factory's live default.
-     *
-     * Set to a {@link PaymentImplementationInfo} from {@link FactoryHandle.listImplementations}
-     * to pin a specific implementation for all create and predict calls on this SDK instance.
-     */
+    /** Optional implementation to pin for create and predict calls. */
     impl?: PaymentImplementationInfo;
 }
 
-// ─── FactoryHandle ─────────────────────────────────────────────────────────────
+export interface DPaymentsFromRpcOptions {
+    readonly codec: AbiCodec;
+    readonly factoryAddress?: string;
+    readonly walletAddress?: string;
+    readonly readBlock?: ReadBlockReference;
+    readonly multicall?: MulticallConfig;
+    readonly implNameOrAddress?: string;
+}
 
-/**
- * Factory-level namespace. Access via `dpayments.factory`.
- *
- * Read methods are async (eth_call). Write methods return unsigned `PreparedTx`.
- */
+/** Factory-level reads and transaction builders. */
 export class FactoryHandle {
     constructor(
         private readonly cfg:          PaymentsConfig,
         private readonly reader:       PaymentReader,
         private readonly builder:      PaymentTxBuilder,
         private readonly decoder:      PaymentEvents,
-        private readonly provider:     AbstractProvider,
+        private readonly rpcClient:    RpcClient,
         private readonly walletAddress?: string,
         private readonly impl?:        string,
     ) {}
 
-    // ─── Reads ─────────────────────────────────────────────────────────────
-
-    /** Full on-chain factory configuration (fees, arbitrator, owner, …). */
+    /** Reads the factory configuration. */
     readConfig(): Promise<FactoryInfo> {
         return this.reader.readFactory(this.cfg.factoryAddress);
     }
 
-    /**
-     * Quotes the gross amount (net + protocol fee) for a given net amount.
-     * Use the returned `gross` value as `amount` when building `CreatePaymentParams`.
-     */
+    /** Quotes the gross amount and protocol fee for a net amount. */
     quoteGross(net: bigint): Promise<FeeQuote> {
         return this.reader.quoteGross(this.cfg.factoryAddress, net);
     }
 
-    /** Current protocol fee in basis points (10 000 = 100 %). */
+    /** Reads the protocol fee in basis points. */
     feeBps(): Promise<bigint> {
         return this.reader.readFeeBps(this.cfg.factoryAddress);
     }
 
-    /** Number of registered payment implementation contracts. */
+    /** Reads the number of registered implementations. */
     implementationCount(): Promise<number> {
         return this.reader.readImplementationCount(this.cfg.factoryAddress);
     }
 
-    /** Implementation address + name at `index` (0-based). */
+    /** Reads an implementation by zero-based index. */
     implementationAt(index: number): Promise<PaymentImplementationInfo> {
         return this.reader.readImplementationAt(this.cfg.factoryAddress, index);
     }
 
-    /**
-     * Calls `predictPaymentAddress` on-chain and returns the deterministic clone address.
-     * Pass the wallet/creator that will submit `createPayment(...)`.
-     */
+    /** Predicts the clone address for a payment. */
     predictAddress(creator: string, req: {
         id: string;
         payee: string;
@@ -122,12 +99,7 @@ export class FactoryHandle {
         return this.reader.predictPaymentAddress(this.cfg.factoryAddress, creator, req, this.impl);
     }
 
-    /**
-     * Reads all registered payment implementations from the factory.
-     *
-     * Returns an ordered list of `{ address, name }` pairs suitable for
-     * passing to {@link DPaymentsSdkConfig.impl} or {@link DPayments.fromProvider}.
-     */
+    /** Lists all registered implementations. */
     async listImplementations(): Promise<PaymentImplementationInfo[]> {
         const count = await this.reader.readImplementationCount(this.cfg.factoryAddress);
         return Promise.all(
@@ -136,11 +108,7 @@ export class FactoryHandle {
         );
     }
 
-    // ─── Writes ────────────────────────────────────────────────────────────
-
-    /**
-     * Build an unsigned `createPayment` transaction for a native-ETH-funded payment.
-     */
+    /** Builds an unsigned ETH-funded `createPayment` transaction. */
     createEthPayment(p: Omit<CreatePaymentParams, 'callerWallet'>, wallet?: string): PreparedTx {
         return this.builder.createEthPayment(this.cfg, {
             ...p,
@@ -149,9 +117,7 @@ export class FactoryHandle {
         });
     }
 
-    /**
-     * Build an unsigned `createPayment` transaction for an ERC20-funded payment.
-     */
+    /** Builds an unsigned ERC20-funded `createPayment` transaction. */
     createErc20Payment(p: Omit<CreatePaymentParams, 'callerWallet'>, wallet?: string): PreparedTx {
         return this.builder.createErc20Payment(this.cfg, {
             ...p,
@@ -160,9 +126,7 @@ export class FactoryHandle {
         });
     }
 
-    /**
-     * Build an ERC20 `approve(spender, amount)` transaction.
-     */
+    /** Builds an unsigned ERC20 approval transaction. */
     erc20Approve(p: Omit<Erc20ApproveParams, 'ownerWallet'>, wallet?: string): PreparedTx {
         return this.builder.erc20Approve(this.cfg, {
             ...p,
@@ -170,28 +134,7 @@ export class FactoryHandle {
         });
     }
 
-    // ─── Prepare helpers (read + build in one call) ───────────────────────────
-
-    /**
-     * Quotes the protocol fee, then builds the `createPayment` transaction for ETH.
-     *
-     * Pass `netAmount` — gross and fee are computed automatically.
-     * `paymentId` is auto-generated (cryptographically random bytes32) if omitted.
-     *
-     * Eliminates the manual quote → create pattern:
-     * ```ts
-     * // Before
-     * const { gross, fee } = await dpayments.factory.quoteGross(net);
-     * const tx = dpayments.factory.createEthPayment({ paymentId, amount: net, fee, … });
-     *
-     * // After
-     * const { tx, paymentId, gross, fee } = await dpayments.factory.prepareCreateEthPayment({
-     *   netAmount: 1_000_000n,
-     *   payeeAddress: '0xPAYEE…',
-     *   settlementTimeUnixSec: BigInt(Math.floor(Date.now() / 1000) + 7 * 86400),
-     * });
-     * ```
-     */
+    /** Quotes the fee and builds an ETH-funded create transaction. */
     async prepareCreateEthPayment(
         params: PrepareCreateParams,
         wallet?: string,
@@ -210,24 +153,7 @@ export class FactoryHandle {
         return { tx, paymentId, gross, fee };
     }
 
-    /**
-     * Quotes the protocol fee, predicts the clone address, then builds both the
-     * ERC20 `approve` and `createPayment` transactions.
-     *
-     * **Send `approveTx` first**, then `createTx`.
-     *
-     * ```ts
-     * const { approveTx, createTx, paymentId, gross, predictedAddress } =
-     *   await dpayments.factory.prepareCreateErc20Payment({
-     *     tokenAddress: '0xTOKEN…',
-     *     netAmount:    1_000_000n,
-     *     payeeAddress: '0xPAYEE…',
-     *     settlementTimeUnixSec: BigInt(Math.floor(Date.now() / 1000) + 7 * 86400),
-     *   });
-     * await signer.sendTransaction(approveTx);
-     * await signer.sendTransaction(createTx);
-     * ```
-     */
+    /** Builds ERC20 approval and create transactions; send `approveTx` first. */
     async prepareCreateErc20Payment(
         params: PrepareCreateErc20Params,
         wallet?: string,
@@ -267,19 +193,12 @@ export class FactoryHandle {
         return { createTx, approveTx, paymentId, gross, fee, predictedAddress };
     }
 
-    // ─── Event history ─────────────────────────────────────────────────────
-
-    /**
-     * Fetches all `PaymentCreated` events emitted by this factory.
-     *
-     * @param fromBlock  First block to scan (default: 0).
-     * @param toBlock    Last block to scan (default: 'latest').
-     */
+    /** Fetches `PaymentCreated` events emitted by this factory. */
     async getLogs(
         fromBlock: number | 'earliest' = 0,
         toBlock:   number | 'latest'   = 'latest',
     ): Promise<PaymentCreatedEvent[]> {
-        const rawLogs = await this.provider.getLogs({
+        const rawLogs = await ethGetLogs(this.rpcClient, {
             address:   this.cfg.factoryAddress,
             topics:    [TOPIC_PAYMENT_CREATED],
             fromBlock,
@@ -304,7 +223,7 @@ export class FactoryHandle {
         toBlock:     number | 'latest'   = 'latest',
     ): Promise<PaymentCreatedEvent[]> {
         const payeeTopic = '0x000000000000000000000000' + requireAddress(payee, 'payee').toLowerCase().slice(2);
-        const rawLogs = await this.provider.getLogs({
+        const rawLogs = await ethGetLogs(this.rpcClient, {
             address:   this.cfg.factoryAddress,
             topics:    [TOPIC_PAYMENT_CREATED, null, null, payeeTopic],
             fromBlock,
@@ -329,7 +248,7 @@ export class FactoryHandle {
         toBlock:     number | 'latest'   = 'latest',
     ): Promise<PaymentCreatedEvent[]> {
         const creatorTopic = '0x000000000000000000000000' + requireAddress(creator, 'creator').toLowerCase().slice(2);
-        const rawLogs = await this.provider.getLogs({
+        const rawLogs = await ethGetLogs(this.rpcClient, {
             address:   this.cfg.factoryAddress,
             topics:    [TOPIC_PAYMENT_CREATED, null, creatorTopic],
             fromBlock,
@@ -348,14 +267,7 @@ export class FactoryHandle {
         });
     }
 
-    /**
-     * Convenience — fetches PaymentCreated events filtered by role.
-     *
-     * `role: 'payer'`  → returns events created by `party`.
-     * `role: 'payee'`  → returns events where `party` is the payee.
-     *
-     * TODO: This is a stopgap. The event query layer needs a proper design and implementation, with flexible filtering, pagination, etc. Refactor when that is in place.
-     */
+    /** Fetches `PaymentCreated` events filtered by payer or payee. */
     async getLogsByParty(
         role:       'payer' | 'payee',
         party:      string,
@@ -367,8 +279,6 @@ export class FactoryHandle {
             : this.getLogsByCreator(party, fromBlock, toBlock);
     }
 
-    // ─── Internals ─────────────────────────────────────────────────────────
-
     private resolveWallet(override?: string): string {
         const w = override ?? this.walletAddress;
         if (!w) throw new Error(
@@ -378,47 +288,16 @@ export class FactoryHandle {
     }
 }
 
-// ─── DPayments ─────────────────────────────────────────────────────────────────
-
-/**
- * Top-level entry point for the DPayments SDK.
- *
- * Zero-config usage (auto-detects chain + factory from the wallet):
- * ```ts
- * const dpayments = await DPayments.fromProvider(provider);
- * ```
- *
- * Explicit config (for custom chains or factory addresses):
- * ```ts
- * const dpayments = new DPayments({
- *   chainId:        1,
- *   factoryAddress: '0x…',
- *   provider,
- *   walletAddress:  '0x…',   // optional — fills callerWallet on all write ops
- *   impl:           { address: '0x…', name: 'DisputablePayment' },  // optional
- * });
- *
- * // Factory-level operations
- * const info     = await dpayments.factory.readConfig();
- * const quote    = await dpayments.factory.quoteGross(1_000_000n);
- * const createTx = dpayments.factory.createEthPayment(params);
- *
- * // Bound payment — no network call
-* const dPayment    = dpayments.dPayment('0x…');
-     * const state        = await dPayment.read();
-     * const settleTx     = dPayment.settle();
-     * const history      = await dPayment.getLogs();
- * ```
- */
+/** Top-level entry point for the DPayments SDK. */
 export class DPayments {
-    /** Factory-level operations (reads + create tx). */
+    /** Factory reads and transaction builders. */
     readonly factory: FactoryHandle;
 
     private readonly _reader:   PaymentReader;
     private readonly _builder:  PaymentTxBuilder;
     private readonly _events:   PaymentEvents;
     private readonly _cfg:      PaymentsConfig;
-    private readonly _provider: AbstractProvider;
+    private readonly _rpcClient: RpcClient;
     private readonly _wallet?:  string;
     private readonly _impl?:    string;
 
@@ -436,10 +315,10 @@ export class DPayments {
 
         requireAddress(factoryAddress, 'factoryAddress');
         this._cfg      = { chainId, factoryAddress };
-        this._provider = config.provider;
-        this._reader   = new PaymentReader(config.provider, config.multicall);
-        this._builder  = new PaymentTxBuilder();
-        this._events   = new PaymentEvents();
+        this._rpcClient = config.rpcClient;
+        this._reader   = new PaymentReader(config.rpcClient, config.codec, config.multicall, config.readBlock);
+        this._builder  = new PaymentTxBuilder(config.codec);
+        this._events   = new PaymentEvents(config.codec);
         this._wallet   = config.walletAddress;
         this._impl     = config.impl
             ? requireAddress(config.impl.address, 'impl')
@@ -447,87 +326,48 @@ export class DPayments {
 
         this.factory = new FactoryHandle(
             this._cfg, this._reader, this._builder, this._events,
-            this._provider, this._wallet, this._impl,
+            this._rpcClient, this._wallet, this._impl,
         );
     }
 
-    /**
-     * Creates a `DPayments` instance using the replayed factory address for the given chain ID.
-     *
-     * Convenience equivalent to:
-     * ```ts
-     * return new DPayments({
-     *   chainId,
-     *   factoryAddress: FACTORY_ADDRESS,
-     *   provider,
-     *   walletAddress,
-     *   impl,
-     * });
-     * ```
-     *
-     * @param chainId Any positive integer chain ID.
-     * @param provider
-     * @param walletAddress
-     * @param impl Optional payment implementation. Omit to use the factory's live default.
-     * @throws if `chainId` is not a positive safe integer.
-     */
+    /** Creates an instance using the deployed factory for `chainId`. */
     static forChain(
         chainId: number,
-        provider: AbstractProvider,
+        rpcClient: RpcClient,
+        codec: AbiCodec,
         walletAddress?: string,
         impl?: PaymentImplementationInfo,
     ): DPayments {
-        return new DPayments({ chainId, provider, walletAddress, impl });
+        return new DPayments({ chainId, rpcClient, codec, walletAddress, impl });
     }
 
-    /**
-     * Creates a `DPayments` instance by auto-detecting the chain from the provider
-     * and using the canonical replayed factory address.
-     *
-     * This is the **recommended** entry point — zero config:
-     * ```ts
-     * const provider = new ethers.BrowserProvider(window.ethereum);
-     * const dpayments = await DPayments.fromProvider(provider);
-     * ```
-     *
-     * With optional wallet address (auto-fills callerWallet on write ops):
-     * ```ts
-     * const signer = await provider.getSigner();
-     * const dpayments = await DPayments.fromProvider(provider, await signer.getAddress());
-     * ```
-     *
-     * With a specific payment implementation by name or address:
-     * ```ts
-     * const dpayments = await DPayments.fromProvider(
-     *     provider, await signer.getAddress(), 'DisputablePayment');
-     * ```
-     *
-     * @param provider          Any ethers AbstractProvider (BrowserProvider, JsonRpcProvider, etc.)
-     * @param walletAddress     Optional — when set, all write ops pre-fill `callerWallet`.
-     * @param implNameOrAddress Optional — name or address of a registered implementation.
-     *                          Omit to use the factory's live default.
-     * @param multicall
-     * @throws if the provider returns an invalid chain ID.
-     */
-    static async fromProvider(
-        provider: AbstractProvider,
-        walletAddress?: string,
-        implNameOrAddress?: string,
-        multicall?: MulticallConfig,
+    static async fromRpc(
+        rpcClient: RpcClient,
+        options: DPaymentsFromRpcOptions,
     ): Promise<DPayments> {
-        const { chainId } = await provider.getNetwork();
-        const chainIdNumber = DPayments._normalizeChainId(Number(chainId));
-        const factoryAddress = getFactoryAddress(chainIdNumber);
+        const chainId = decodeRpcChainId(
+            await rpcClient.request({ method: 'eth_chainId', params: [] }),
+        );
+        const factoryAddress = options.factoryAddress ?? getFactoryAddress(chainId);
         if (!factoryAddress) {
-            throw new Error(`Unsupported chain ID: ${chainIdNumber}`);
+            throw new Error(`Unsupported chain ID: ${chainId}`);
         }
 
-        let impl: PaymentImplementationInfo | undefined;
-        if (implNameOrAddress) {
-            impl = await this._resolveImpl(provider, factoryAddress, implNameOrAddress);
-        }
+        const reader = new PaymentReader(rpcClient, options.codec, options.multicall, options.readBlock);
+        const impl = options.implNameOrAddress
+            ? await this._resolveImpl(reader, factoryAddress, options.implNameOrAddress)
+            : undefined;
 
-        return new DPayments({ chainId: chainIdNumber, provider, walletAddress, impl, multicall });
+        return new DPayments({
+            chainId,
+            rpcClient,
+            codec: options.codec,
+            factoryAddress,
+            walletAddress: options.walletAddress,
+            readBlock: options.readBlock,
+            multicall: options.multicall,
+            impl,
+        });
     }
 
     private static _normalizeChainId(chainId: number): number {
@@ -538,16 +378,13 @@ export class DPayments {
     }
 
     private static async _resolveImpl(
-        provider: AbstractProvider,
+        reader: PaymentReader,
         factoryAddress: string,
         nameOrAddress: string,
     ): Promise<PaymentImplementationInfo> {
-        // Address: validate and return directly
         if (nameOrAddress.startsWith('0x')) {
             return { address: requireAddress(nameOrAddress, 'impl'), name: '' };
         }
-        // Name: read factory, find match
-        const reader = new PaymentReader(provider);
         const count  = await reader.readImplementationCount(factoryAddress);
         const impls  = await Promise.all(
             Array.from({ length: count }, (_, i) =>
@@ -561,15 +398,11 @@ export class DPayments {
         return match;
     }
 
-    /**
-     * Returns a `DPayment` bound to the given deployed clone address.
-     *
-     * This is a **free, synchronous** operation — no network call is made.
-     */
+    /** Binds a `DPayment` instance to a deployed clone address. */
     dPayment(address: string): DPayment {
         return new DPayment(
             requireAddress(address, 'paymentAddress'),
-            this._cfg, this._reader, this._builder, this._events, this._provider, this._wallet,
+            this._cfg, this._reader, this._builder, this._events, this._rpcClient, this._wallet,
         );
     }
 }

@@ -1,7 +1,6 @@
-import { Interface, ZeroAddress } from 'ethers';
 import type { PreparedTx } from './common/index.js';
 import { requireAddress, type SigningPreview, buildFeeBreakdown, formatUnixSec, ZERO_ADDRESS } from './common/index.js';
-import { PaymentFactory__factory, DisputablePayment__factory } from '../generated/typechain/index.js';
+import type { AbiCodec } from './common/AbiCodec.js';
 
 // ─── Configuration ─────────────────────────────────────────────────────────────
 
@@ -59,11 +58,6 @@ export interface Erc20ApproveParams {
     amount: bigint;
 }
 
-// ─── ERC20 approve — not a payment contract, kept as minimal inline fragment
-const ERC20_ABI = [
-    'function approve(address spender, uint256 amount) returns (bool)',
-];
-
 // ─── Internal helpers ──────────────────────────────────────────────────────────
 
 function requireBytes32Hex(value: string, name: string): void {
@@ -97,15 +91,7 @@ function withValue(
  * submits the transaction. This class never holds private keys.
  */
 export class PaymentTxBuilder {
-    private readonly factoryIface: Interface;
-    private readonly paymentIface: Interface;
-    private readonly erc20Iface: Interface;
-
-    constructor() {
-        this.factoryIface = PaymentFactory__factory.createInterface();
-        this.paymentIface = DisputablePayment__factory.createInterface();
-        this.erc20Iface   = new Interface(ERC20_ABI);
-    }
+    constructor(private readonly codec: AbiCodec) {}
 
     // ─── Factory: createPayment ─────────────────────────────────────────────
 
@@ -137,8 +123,8 @@ export class PaymentTxBuilder {
         if (p.fee < 0n) throw new Error('fee must be >= 0');
         if (p.settlementTimeUnixSec <= 0n) throw new Error('settlementTimeUnixSec must be > 0');
 
-        const token = tokenAddress || ZeroAddress;
-        const isEth = token === ZeroAddress;
+        const token = tokenAddress || ZERO_ADDRESS;
+        const isEth = token === ZERO_ADDRESS;
         const gross  = p.amount + p.fee;
 
         const req = {
@@ -151,12 +137,8 @@ export class PaymentTxBuilder {
         };
 
         const data = p.impl
-            ? this.factoryIface.encodeFunctionData(
-                'createPayment(address,(bytes32,address,address,uint256,uint256,uint256))',
-                [p.impl, req])
-            : this.factoryIface.encodeFunctionData(
-                'createPayment((bytes32,address,address,uint256,uint256,uint256))',
-                [req]);
+            ? this.codec.encode('createPayment(address,(bytes32,address,address,uint256,uint256,uint256))', [p.impl, req])
+            : this.codec.encode('createPayment((bytes32,address,address,uint256,uint256,uint256))', [req]);
 
         const preview: SigningPreview = {
             action: isEth ? 'Create ETH Payment' : 'Create ERC20 Payment',
@@ -220,7 +202,7 @@ export class PaymentTxBuilder {
         requireAddress(p.callerWallet, 'callerWallet');
         requireAddress(p.paymentAddress, 'paymentAddress');
         if (p.arbFeeWei < 0n) throw new Error('arbFeeWei must be >= 0');
-        const data = this.paymentIface.encodeFunctionData('dispute', []);
+        const data = this.codec.encode('dispute()');
         const preview: SigningPreview = {
             action: 'Raise Dispute',
             signer: 'payer',
@@ -238,7 +220,7 @@ export class PaymentTxBuilder {
         requireAddress(p.callerWallet, 'callerWallet');
         requireAddress(p.paymentAddress, 'paymentAddress');
         if (!p.evidenceUri?.trim()) throw new Error('evidenceUri must not be blank');
-        const data = this.paymentIface.encodeFunctionData('submitEvidence', [p.evidenceUri]);
+        const data = this.codec.encode('submitEvidence(string)', [p.evidenceUri]);
         const preview: SigningPreview = {
             action: 'Submit Evidence',
             signer: 'either party',
@@ -252,7 +234,7 @@ export class PaymentTxBuilder {
         requireAddress(p.callerWallet, 'callerWallet');
         requireAddress(p.paymentAddress, 'paymentAddress');
         if (p.appealFeeWei < 0n) throw new Error('appealFeeWei must be >= 0');
-        const data = this.paymentIface.encodeFunctionData('appeal', [p.extraData ?? '0x']);
+        const data = this.codec.encode('appeal(bytes)', [p.extraData ?? '0x']);
         const preview: SigningPreview = {
             action: 'Appeal Ruling',
             signer: 'either party',
@@ -285,7 +267,7 @@ export class PaymentTxBuilder {
         requireAddress(p.tokenAddress, 'tokenAddress');
         requireAddress(p.spenderAddress, 'spenderAddress');
         if (p.amount <= 0n) throw new Error('amount must be > 0');
-        const data = this.erc20Iface.encodeFunctionData('approve', [p.spenderAddress, p.amount]);
+        const data = this.codec.encode('approve(address,uint256)', [p.spenderAddress, p.amount]);
         const preview: SigningPreview = {
             action: 'Approve ERC20',
             signer: 'payer',
@@ -309,7 +291,13 @@ export class PaymentTxBuilder {
     ): PreparedTx {
         requireAddress(p.callerWallet, 'callerWallet');
         requireAddress(p.paymentAddress, 'paymentAddress');
-        const data = this.paymentIface.encodeFunctionData(method, []);
+        const signatures: Record<string, string> = {
+            settle: 'settle()',
+            voluntaryRefund: 'voluntaryRefund()',
+            consume: 'consume()',
+            claim: 'claim()',
+        };
+        const data = this.codec.encode(signatures[method] ?? method);
         const preview: SigningPreview = {
             action,
             signer: 'either party',

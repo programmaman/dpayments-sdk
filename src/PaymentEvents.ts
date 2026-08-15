@@ -1,5 +1,6 @@
-import { id as ethersId } from 'ethers';
 import { matchesTopic, type EvmLog } from './common/index.js';
+import type { AbiCodec, Hex } from './common/AbiCodec.js';
+import { PAYMENT_EVENT_TOPICS } from './abi.js';
 import type {
     PaymentCreatedEvent,
     PaymentSettledEvent,
@@ -9,168 +10,92 @@ import type {
     ConsumedEvent,
     PaymentEvidenceEvent,
 } from './types.js';
-import { PaymentFactory__factory, DisputablePayment__factory } from '../generated/typechain/index.js';
 
-// ─── TypeChain-generated interfaces for event parsing ────────────────────────
+export const TOPIC_PAYMENT_CREATED = PAYMENT_EVENT_TOPICS.PAYMENT_CREATED;
+export const TOPIC_PAYMENT_SETTLED = PAYMENT_EVENT_TOPICS.PAYMENT_SETTLED;
+export const TOPIC_DISPUTE_RAISED = PAYMENT_EVENT_TOPICS.DISPUTE_RAISED;
+export const TOPIC_RESOLVED_TO_PAYEE = PAYMENT_EVENT_TOPICS.RESOLVED_TO_PAYEE;
+export const TOPIC_REFUNDED_TO_PAYER = PAYMENT_EVENT_TOPICS.REFUNDED_TO_PAYER;
+export const TOPIC_CONSUMED = PAYMENT_EVENT_TOPICS.CONSUMED;
+export const TOPIC_EVIDENCE = PAYMENT_EVENT_TOPICS.EVIDENCE;
 
-const factoryIface = PaymentFactory__factory.createInterface();
-const paymentIface = DisputablePayment__factory.createInterface();
-
-// ─── Pre-computed topic0 hashes (keccak256 of canonical event signature) ───────
-
-/** Topic0 for PaymentFactory.PaymentCreated */
-export const TOPIC_PAYMENT_CREATED   = ethersId('PaymentCreated(bytes32,address,address,address,address,uint256,uint256,uint256)');
-/** Topic0 for DisputablePayment.PaymentSettled */
-export const TOPIC_PAYMENT_SETTLED   = ethersId('PaymentSettled(address,uint256)');
-/** Topic0 for DisputablePayment.DisputeRaised */
-export const TOPIC_DISPUTE_RAISED   = ethersId('DisputeRaised(uint256,address)');
-/** Topic0 for DisputablePayment.ResolvedToPayee */
-export const TOPIC_RESOLVED_TO_PAYEE = ethersId('ResolvedToPayee(address,uint256)');
-/** Topic0 for DisputablePayment.RefundedToPayer */
-export const TOPIC_REFUNDED_TO_PAYER = ethersId('RefundedToPayer(address,uint256)');
-/** Topic0 for DisputablePayment.Consumed */
-export const TOPIC_CONSUMED          = ethersId('Consumed()');
-/** Topic0 for IEvidence.Evidence emitted by a payment clone */
-export const TOPIC_EVIDENCE          = ethersId('Evidence(address,uint256,address,string)');
-
-/**
- * All DisputablePayment event topic0 hashes as a single object.
- *
- * Use this for custom `eth_getLogs` topic filtering.
- *
- * @example
- * provider.getLogs({ topics: [PaymentTopics.PAYMENT_SETTLED], address: cloneAddr })
- */
 export const PaymentTopics = {
-    PAYMENT_CREATED:   TOPIC_PAYMENT_CREATED,
-    PAYMENT_SETTLED:   TOPIC_PAYMENT_SETTLED,
-    DISPUTE_RAISED:    TOPIC_DISPUTE_RAISED,
+    PAYMENT_CREATED: TOPIC_PAYMENT_CREATED,
+    PAYMENT_SETTLED: TOPIC_PAYMENT_SETTLED,
+    DISPUTE_RAISED: TOPIC_DISPUTE_RAISED,
     RESOLVED_TO_PAYEE: TOPIC_RESOLVED_TO_PAYEE,
     REFUNDED_TO_PAYER: TOPIC_REFUNDED_TO_PAYER,
-    CONSUMED:          TOPIC_CONSUMED,
-    EVIDENCE:          TOPIC_EVIDENCE,
+    CONSUMED: TOPIC_CONSUMED,
+    EVIDENCE: TOPIC_EVIDENCE,
 } as const;
 
-// ─── PaymentEvents ────────────────────────────────────────────────────────────
+const CREATED = 'PaymentCreated(bytes32,address,address,address,address,uint256,uint256,uint256)';
+const SETTLED = 'PaymentSettled(address,uint256)';
+const DISPUTE = 'DisputeRaised(uint256,address)';
+const RESOLVED = 'ResolvedToPayee(address,uint256)';
+const REFUNDED = 'RefundedToPayer(address,uint256)';
+const CONSUMED = 'Consumed()';
+const EVIDENCE = 'Evidence(address,uint256,address,string)';
 
-/**
- * Stateless log decoder for PaymentFactory and DisputablePayment events.
- *
- * Each tryDecode* method:
- *   1. Returns undefined immediately if topics[0] does not match.
- *   2. Returns the decoded event object on match.
- *   3. Throws if the log is structurally malformed.
- *
- * Usage:
- *   const events = new PaymentEvents();
- *   events.tryDecodePaymentCreated(log)?.paymentAddress;
- */
 export class PaymentEvents {
+    constructor(private readonly codec: AbiCodec) {}
 
-    // ─── Factory events ───────────────────────────────────────────────────────
-
-    /**
-     * Tries to decode a PaymentFactory.PaymentCreated log.
-     */
     tryDecodePaymentCreated(log: EvmLog): PaymentCreatedEvent | undefined {
         if (!matchesTopic(log, TOPIC_PAYMENT_CREATED)) return undefined;
-        const parsed = factoryIface.parseLog({ topics: log.topics, data: log.data })!;
+        const event = this.codec.decodeEvent(CREATED, log.topics as Hex[], log.data as Hex);
         return {
-            paymentId:       parsed.args.id             as string,
-            paymentAddress:  parsed.args.payment        as string,
-            creator:         parsed.args.creator        as string,
-            payee:           parsed.args.payee          as string,
-            token:           parsed.args.token          as string,
-            amount:          parsed.args.amount         as bigint,
-            fee:             parsed.args.fee            as bigint,
-            settlementTime:  parsed.args.settlementTime as bigint,
-            logAddress:      log.address,
-            transactionHash: log.transactionHash,
-        };
-    }
-
-    // ─── Payment clone events ─────────────────────────────────────────────────
-
-    /**
-     * Tries to decode a DisputablePayment.PaymentSettled log.
-     */
-    tryDecodePaymentSettled(log: EvmLog): PaymentSettledEvent | undefined {
-        if (!matchesTopic(log, TOPIC_PAYMENT_SETTLED)) return undefined;
-        const parsed = paymentIface.parseLog({ topics: log.topics, data: log.data })!;
-        return {
-            payee:           parsed.args.payee  as string,
-            amount:          parsed.args.amount as bigint,
-            logAddress:      log.address,
-            transactionHash: log.transactionHash,
-        };
-    }
-
-    /**
-     * Tries to decode a DisputablePayment.DisputeRaised log.
-     */
-    tryDecodeDisputeRaised(log: EvmLog): DisputeRaisedEvent | undefined {
-        if (!matchesTopic(log, TOPIC_DISPUTE_RAISED)) return undefined;
-        const parsed = paymentIface.parseLog({ topics: log.topics, data: log.data })!;
-        return {
-            disputeId:       parsed.args.disputeId as bigint,
-            raisedBy:        parsed.args.raisedBy  as string,
-            logAddress:      log.address,
-            transactionHash: log.transactionHash,
-        };
-    }
-
-    /**
-     * Tries to decode a DisputablePayment.ResolvedToPayee log.
-     */
-    tryDecodeResolvedToPayee(log: EvmLog): ResolvedToPayeeEvent | undefined {
-        if (!matchesTopic(log, TOPIC_RESOLVED_TO_PAYEE)) return undefined;
-        const parsed = paymentIface.parseLog({ topics: log.topics, data: log.data })!;
-        return {
-            payee:           parsed.args.payee as string,
-            paid:            parsed.args.paid  as bigint,
-            logAddress:      log.address,
-            transactionHash: log.transactionHash,
-        };
-    }
-
-    /**
-     * Tries to decode a DisputablePayment.RefundedToPayer log.
-     */
-    tryDecodeRefundedToPayer(log: EvmLog): RefundedToPayerEvent | undefined {
-        if (!matchesTopic(log, TOPIC_REFUNDED_TO_PAYER)) return undefined;
-        const parsed = paymentIface.parseLog({ topics: log.topics, data: log.data })!;
-        return {
-            payer:           parsed.args.payer as string,
-            paid:            parsed.args.paid  as bigint,
-            logAddress:      log.address,
-            transactionHash: log.transactionHash,
-        };
-    }
-
-    /** Tries to decode a DisputablePayment.Consumed log. */
-    tryDecodeConsumed(log: EvmLog): ConsumedEvent | undefined {
-        if (!matchesTopic(log, TOPIC_CONSUMED)) return undefined;
-        paymentIface.parseLog({ topics: log.topics, data: log.data });
-        return {
+            paymentId: event.id as string,
+            paymentAddress: event.payment as string,
+            creator: event.creator as string,
+            payee: event.payee as string,
+            token: event.token as string,
+            amount: event.amount as bigint,
+            fee: event.fee as bigint,
+            settlementTime: event.settlementTime as bigint,
             logAddress: log.address,
             transactionHash: log.transactionHash,
         };
     }
 
-    // ─── Evidence ─────────────────────────────────────────────────────────────
+    tryDecodePaymentSettled(log: EvmLog): PaymentSettledEvent | undefined {
+        if (!matchesTopic(log, TOPIC_PAYMENT_SETTLED)) return undefined;
+        const event = this.codec.decodeEvent(SETTLED, log.topics as Hex[], log.data as Hex);
+        return { payee: event.payee as string, amount: event.amount as bigint, logAddress: log.address, transactionHash: log.transactionHash };
+    }
 
-    /**
-     * Tries to decode an IEvidence.Evidence log emitted by a payment clone.
-     */
+    tryDecodeDisputeRaised(log: EvmLog): DisputeRaisedEvent | undefined {
+        if (!matchesTopic(log, TOPIC_DISPUTE_RAISED)) return undefined;
+        const event = this.codec.decodeEvent(DISPUTE, log.topics as Hex[], log.data as Hex);
+        return { disputeId: event.disputeId as bigint, raisedBy: event.raisedBy as string, logAddress: log.address, transactionHash: log.transactionHash };
+    }
+
+    tryDecodeResolvedToPayee(log: EvmLog): ResolvedToPayeeEvent | undefined {
+        if (!matchesTopic(log, TOPIC_RESOLVED_TO_PAYEE)) return undefined;
+        const event = this.codec.decodeEvent(RESOLVED, log.topics as Hex[], log.data as Hex);
+        return { payee: event.payee as string, paid: event.paid as bigint, logAddress: log.address, transactionHash: log.transactionHash };
+    }
+
+    tryDecodeRefundedToPayer(log: EvmLog): RefundedToPayerEvent | undefined {
+        if (!matchesTopic(log, TOPIC_REFUNDED_TO_PAYER)) return undefined;
+        const event = this.codec.decodeEvent(REFUNDED, log.topics as Hex[], log.data as Hex);
+        return { payer: event.payer as string, paid: event.paid as bigint, logAddress: log.address, transactionHash: log.transactionHash };
+    }
+
+    tryDecodeConsumed(log: EvmLog): ConsumedEvent | undefined {
+        if (!matchesTopic(log, TOPIC_CONSUMED)) return undefined;
+        this.codec.decodeEvent(CONSUMED, log.topics as Hex[], log.data as Hex);
+        return { logAddress: log.address, transactionHash: log.transactionHash };
+    }
+
     tryDecodeEvidence(log: EvmLog): PaymentEvidenceEvent | undefined {
         if (!matchesTopic(log, TOPIC_EVIDENCE)) return undefined;
-        const parsed = paymentIface.parseLog({ topics: log.topics, data: log.data })!;
+        const event = this.codec.decodeEvent(EVIDENCE, log.topics as Hex[], log.data as Hex);
         return {
-            arbitrator:      parsed.args._arbitrator      as string,
-            evidenceGroupId: parsed.args._evidenceGroupID as bigint,
-            party:           parsed.args._party           as string,
-            evidenceUri:     parsed.args._evidence        as string,
-            logAddress:      log.address,
+            arbitrator: event.arbitrator as string,
+            evidenceGroupId: event.evidenceGroupId as bigint,
+            party: event.party as string,
+            evidenceUri: event.evidenceUri as string,
+            logAddress: log.address,
             transactionHash: log.transactionHash,
         };
     }

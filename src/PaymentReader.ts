@@ -1,4 +1,3 @@
-import { Interface, AbstractProvider, ZeroAddress } from 'ethers';
 import { requireAddress } from './common/index.js';
 import {
     type FactoryInfo,
@@ -11,12 +10,9 @@ import {
 } from './types.js';
 import type { PaymentReadable } from './internal/PaymentReadable.js';
 import { type MulticallConfig, type EncodedReadCall, executeMulticall } from './multicall.js';
-import { PaymentFactory__factory, DisputablePayment__factory } from '../generated/typechain/index.js';
-
-// ─── Reusable Interface instances (allocated once, not per-call) ──────────────
-
-const FACTORY_IFACE = PaymentFactory__factory.createInterface() as unknown as Interface;
-const PAYMENT_IFACE = DisputablePayment__factory.createInterface() as unknown as Interface;
+import type { ReadBlockReference, RpcClient } from './common/index.js';
+import { encodeRpcBlockReference, ethCall, type RpcBlockIdentifier } from './internal/rpc.js';
+import type { AbiCodec, Hex } from './common/AbiCodec.js';
 
 // ─── PaymentReader ────────────────────────────────────────────────────────────
 
@@ -24,18 +20,28 @@ const PAYMENT_IFACE = DisputablePayment__factory.createInterface() as unknown as
  * Stateless reader for on-chain DisputablePayment state via JSON-RPC eth_call.
  *
  *
- * Accepts any ethers AbstractProvider (JsonRpcProvider, BrowserProvider, etc.).
- * All methods are async and throw if the RPC call fails.
+ * Accepts the SDK's minimal RpcClient.
  *
  * Pass a `MulticallConfig` to batch reads through Multicall3.
  * Omit it (or leave undefined) to use the original parallel Promise.all path.
  */
 export class PaymentReader {
     private readonly _multicall?: MulticallConfig;
+    private readonly _rpcClient: RpcClient;
+    private readonly _codec: AbiCodec;
+    private readonly _readBlock: RpcBlockIdentifier;
     readonly readPayment: PaymentReadable<[paymentAddress: string]>;
 
-    constructor(private readonly provider: AbstractProvider, multicallConfig?: MulticallConfig) {
+    constructor(
+        client: RpcClient,
+        codec: AbiCodec,
+        multicallConfig?: MulticallConfig,
+        readBlock: ReadBlockReference = 'latest',
+    ) {
+        this._rpcClient = client;
+        this._codec = codec;
         this._multicall = multicallConfig;
+        this._readBlock = encodeRpcBlockReference(readBlock);
         this.readPayment = Object.assign(
             (paymentAddress: string) => this._readPaymentSnapshot(paymentAddress),
             {
@@ -73,7 +79,7 @@ export class PaymentReader {
 
     private async _readFactoryDirect(addr: string): Promise<FactoryInfo> {
         const call = (method: string) =>
-            this.provider.call({ to: addr, data: FACTORY_IFACE.encodeFunctionData(method, []) });
+            this._call({ to: addr, data: this._codec.encode(`${method}()`) });
 
         const [feeBpsRaw, feeRecipient, arbitrator, arbitratorConfiguration,
                metaEvidenceUri, owner, pendingOwnerRaw, defaultImplRaw] =
@@ -88,74 +94,55 @@ export class PaymentReader {
                 call('defaultPaymentImplementation'),
             ]);
 
-        const feeBps = FACTORY_IFACE.decodeFunctionResult('feeBps', feeBpsRaw)[0] as bigint;
-        const pendingOwner = FACTORY_IFACE.decodeFunctionResult('pendingOwner', pendingOwnerRaw)[0] as string;
-        const [defaultImpl, defaultImplName] = FACTORY_IFACE.decodeFunctionResult('defaultPaymentImplementation', defaultImplRaw);
+        const feeBps = this._codec.decode('feeBps()', feeBpsRaw)[0] as bigint;
+        const pendingOwner = this._codec.decode('pendingOwner()', pendingOwnerRaw)[0] as string;
+        const [defaultImpl, defaultImplName] = this._codec.decode('defaultPaymentImplementation()', defaultImplRaw);
 
         return {
             factoryAddress: addr,
             defaultImpl:     defaultImpl as string,
             defaultImplName: defaultImplName as string,
             feeBps,
-            feeRecipient:    FACTORY_IFACE.decodeFunctionResult('feeRecipient', feeRecipient)[0] as string,
-            arbitrator:      FACTORY_IFACE.decodeFunctionResult('arbitrator', arbitrator)[0] as string,
-            arbitratorConfiguration: FACTORY_IFACE.decodeFunctionResult('arbitratorConfiguration', arbitratorConfiguration)[0] as string,
-            metaEvidenceUri: FACTORY_IFACE.decodeFunctionResult('metaEvidenceURI', metaEvidenceUri)[0] as string,
-            owner:           FACTORY_IFACE.decodeFunctionResult('owner', owner)[0] as string,
-            pendingOwner:    pendingOwner && pendingOwner !== ZeroAddress ? pendingOwner : '',
+            feeRecipient:    this._codec.decode('feeRecipient()', feeRecipient)[0] as string,
+            arbitrator:      this._codec.decode('arbitrator()', arbitrator)[0] as string,
+            arbitratorConfiguration: this._codec.decode('arbitratorConfiguration()', arbitratorConfiguration)[0] as string,
+            metaEvidenceUri: this._codec.decode('metaEvidenceURI()', metaEvidenceUri)[0] as string,
+            owner:           this._codec.decode('owner()', owner)[0] as string,
+            pendingOwner:    pendingOwner && pendingOwner !== '0x0000000000000000000000000000000000000000' ? pendingOwner : '',
         };
     }
 
     private async _readFactoryViaMulticall(addr: string): Promise<FactoryInfo> {
-        const cfg   = this._multicall!;
-
-        const enc = (method: string): EncodedReadCall => ({
-            target:   addr,
-            method,
-            callData: FACTORY_IFACE.encodeFunctionData(method, []),
-            decode:   (data: string) => FACTORY_IFACE.decodeFunctionResult(method, data)[0] as unknown,
-        });
-
         const calls: EncodedReadCall[] = [
-            enc('feeBps'),
-            enc('feeRecipient'),
-            enc('arbitrator'),
-            enc('arbitratorConfiguration'),
-            enc('metaEvidenceURI'),
-            enc('owner'),
-            enc('pendingOwner'),
-            // defaultPaymentImplementation returns two values — decode both
-            {
-                target:   addr,
-                method:   'defaultPaymentImplementation',
-                callData: FACTORY_IFACE.encodeFunctionData('defaultPaymentImplementation', []),
-                decode:   (data: string) => {
-                    const r = FACTORY_IFACE.decodeFunctionResult('defaultPaymentImplementation', data);
-                    return { impl: r[0] as string, name: r[1] as string };
-                },
-            },
+            this._encodeReadCall(addr, 'feeBps'),
+            this._encodeReadCall(addr, 'feeRecipient'),
+            this._encodeReadCall(addr, 'arbitrator'),
+            this._encodeReadCall(addr, 'arbitratorConfiguration'),
+            this._encodeReadCall(addr, 'metaEvidenceURI'),
+            this._encodeReadCall(addr, 'owner'),
+            this._encodeReadCall(addr, 'pendingOwner'),
+            this._encodeReadCall(addr, 'defaultPaymentImplementation', data => {
+                const [impl, name] = this._codec.decode('defaultPaymentImplementation()', data);
+                return { impl: impl as string, name: name as string };
+            }),
         ];
 
-        const results = await executeMulticall(
-            this.provider, cfg.address, calls, cfg.requireSuccess !== false,
-        );
+        const values = await this._executeMulticall(calls);
 
-        const [feeBpsRaw, feeRecipient, arbitrator, arbitratorConfiguration,
-               metaEvidenceUri, owner, pendingOwnerRaw, defaultImplRaw] = results;
-
-        const di = defaultImplRaw as { impl: string; name: string };
+        const di = values[7] as { impl: string; name: string };
 
         return {
             factoryAddress:  addr,
             defaultImpl:     di.impl,
             defaultImplName: di.name,
-            feeBps:          feeBpsRaw as bigint,
-            feeRecipient:    feeRecipient as string,
-            arbitrator:      arbitrator as string,
-            arbitratorConfiguration: arbitratorConfiguration as string,
-            metaEvidenceUri: metaEvidenceUri as string,
-            owner:           owner as string,
-            pendingOwner:    (pendingOwnerRaw as string) ?? '',
+            feeBps:          values[0] as bigint,
+            feeRecipient:    values[1] as string,
+            arbitrator:      values[2] as string,
+            arbitratorConfiguration: values[3] as string,
+            metaEvidenceUri: values[4] as string,
+            owner:           values[5] as string,
+            pendingOwner:    values[6] as string === '0x0000000000000000000000000000000000000000'
+                ? '' : (values[6] as string),
         };
     }
 
@@ -164,40 +151,34 @@ export class PaymentReader {
     async quoteGross(factoryAddress: string, net: bigint): Promise<FeeQuote> {
         const addr = requireAddress(factoryAddress, 'factoryAddress');
         if (net <= 0n) throw new Error('net must be > 0');
-        const iface = new Interface([
-            'function quoteGross(uint256 net) view returns (uint256 gross, uint256 fee)',
-        ]);
-        const raw = await this.provider.call({
+        const raw = await this._call({
             to: addr,
-            data: iface.encodeFunctionData('quoteGross', [net]),
+            data: this._codec.encode('quoteGross(uint256)', [net]),
         });
-        const [gross, fee] = iface.decodeFunctionResult('quoteGross', raw);
+        const [gross, fee] = this._codec.decode('quoteGross(uint256)', raw);
         return { gross: gross as bigint, fee: fee as bigint };
     }
 
     async readFeeBps(factoryAddress: string): Promise<bigint> {
         const addr = requireAddress(factoryAddress, 'factoryAddress');
-        const iface = new Interface(['function feeBps() view returns (uint16)']);
-        const raw = await this.provider.call({ to: addr, data: iface.encodeFunctionData('feeBps', []) });
-        return BigInt(iface.decodeFunctionResult('feeBps', raw)[0]);
+        const raw = await this._call({ to: addr, data: this._codec.encode('feeBps()') });
+        return this._codec.decode('feeBps()', raw)[0] as bigint;
     }
 
     async readImplementationCount(factoryAddress: string): Promise<number> {
         const addr = requireAddress(factoryAddress, 'factoryAddress');
-        const iface = new Interface(['function paymentImplementationCount() view returns (uint256)']);
-        const raw = await this.provider.call({ to: addr, data: iface.encodeFunctionData('paymentImplementationCount', []) });
-        return Number(iface.decodeFunctionResult('paymentImplementationCount', raw)[0]);
+        const raw = await this._call({ to: addr, data: this._codec.encode('paymentImplementationCount()') });
+        return Number(this._codec.decode('paymentImplementationCount()', raw)[0]);
     }
 
     async readImplementationAt(factoryAddress: string, index: number): Promise<PaymentImplementationInfo> {
         const addr = requireAddress(factoryAddress, 'factoryAddress');
         if (index < 0) throw new Error('index must be >= 0');
-        const iface = new Interface(['function paymentImplementationAt(uint256 index) view returns (address impl, string name)']);
-        const raw = await this.provider.call({
+        const raw = await this._call({
             to: addr,
-            data: iface.encodeFunctionData('paymentImplementationAt', [index]),
+            data: this._codec.encode('paymentImplementationAt(uint256)', [index]),
         });
-        const [impl, name] = iface.decodeFunctionResult('paymentImplementationAt', raw);
+        const [impl, name] = this._codec.decode('paymentImplementationAt(uint256)', raw);
         return { address: impl as string, name: name as string };
     }
 
@@ -216,11 +197,6 @@ export class PaymentReader {
         const addr = requireAddress(factoryAddress, 'factoryAddress');
         const creatorAddr = requireAddress(creator, 'creator');
 
-        const iface = new Interface([
-            'function predictPaymentAddress(address creator, (bytes32 id, address payee, address token, uint256 amount, uint256 fee, uint256 settlementTime) req) view returns (address)',
-            'function predictPaymentAddress(address impl, address creator, (bytes32 id, address payee, address token, uint256 amount, uint256 fee, uint256 settlementTime) req) view returns (address)',
-        ]);
-
         const reqTuple = {
             id: req.id,
             payee: req.payee,
@@ -231,22 +207,22 @@ export class PaymentReader {
         };
 
         if (impl) {
-            const raw = await this.provider.call({
+            const raw = await this._call({
                 to: addr,
-                data: iface.encodeFunctionData(
+                data: this._codec.encode(
                     'predictPaymentAddress(address,address,(bytes32,address,address,uint256,uint256,uint256))',
                     [impl, creatorAddr, reqTuple]),
             });
-            return iface.decodeFunctionResult(
+            return this._codec.decode(
                 'predictPaymentAddress(address,address,(bytes32,address,address,uint256,uint256,uint256))', raw)[0] as string;
         }
-        const raw = await this.provider.call({
+        const raw = await this._call({
             to: addr,
-            data: iface.encodeFunctionData(
+            data: this._codec.encode(
                 'predictPaymentAddress(address,(bytes32,address,address,uint256,uint256,uint256))',
                 [creatorAddr, reqTuple]),
         });
-        return iface.decodeFunctionResult(
+        return this._codec.decode(
             'predictPaymentAddress(address,(bytes32,address,address,uint256,uint256,uint256))', raw)[0] as string;
     }
 
@@ -264,7 +240,7 @@ export class PaymentReader {
 
     private async _readPaymentDirect(addr: string): Promise<PaymentInfo> {
         const call = (method: string) =>
-            this.provider.call({ to: addr, data: PAYMENT_IFACE.encodeFunctionData(method, []) });
+            this._call({ to: addr, data: this._codec.encode(`${method}()`) });
 
         const [payerRaw, payeeRaw, tokenRaw, amountRaw, stateRaw,
                settlementTimeRaw, consumedRaw, disputeIdRaw, disputeStartTimeRaw,
@@ -278,77 +254,81 @@ export class PaymentReader {
 
         return {
             paymentAddress: addr,
-            payer:           PAYMENT_IFACE.decodeFunctionResult('payer', payerRaw)[0] as string,
-            payee:           PAYMENT_IFACE.decodeFunctionResult('payee', payeeRaw)[0] as string,
-            token:           PAYMENT_IFACE.decodeFunctionResult('token', tokenRaw)[0] as string,
-            amount:          PAYMENT_IFACE.decodeFunctionResult('amount', amountRaw)[0] as bigint,
-            state:           paymentStateFromOrdinal(Number(PAYMENT_IFACE.decodeFunctionResult('state', stateRaw)[0])),
-            settlementTime:  PAYMENT_IFACE.decodeFunctionResult('settlementTime', settlementTimeRaw)[0] as bigint,
-            consumed:        PAYMENT_IFACE.decodeFunctionResult('consumed', consumedRaw)[0] as boolean,
-            disputeId:       PAYMENT_IFACE.decodeFunctionResult('disputeId', disputeIdRaw)[0] as bigint,
-            disputeStartTime:PAYMENT_IFACE.decodeFunctionResult('disputeStartTime', disputeStartTimeRaw)[0] as bigint,
-            arbitratorAddress:       PAYMENT_IFACE.decodeFunctionResult('arbitrator', arbitratorRaw)[0] as string,
-            arbitratorConfiguration: PAYMENT_IFACE.decodeFunctionResult('arbitratorConfiguration', arbitratorConfigRaw)[0] as string,
+            payer:           this._codec.decode('payer()', payerRaw)[0] as string,
+            payee:           this._codec.decode('payee()', payeeRaw)[0] as string,
+            token:           this._codec.decode('token()', tokenRaw)[0] as string,
+            amount:          this._codec.decode('amount()', amountRaw)[0] as bigint,
+            state:           paymentStateFromOrdinal(Number(this._codec.decode('state()', stateRaw)[0])),
+            settlementTime:  this._codec.decode('settlementTime()', settlementTimeRaw)[0] as bigint,
+            consumed:        this._codec.decode('consumed()', consumedRaw)[0] as boolean,
+            disputeId:       this._codec.decode('disputeId()', disputeIdRaw)[0] as bigint,
+            disputeStartTime:this._codec.decode('disputeStartTime()', disputeStartTimeRaw)[0] as bigint,
+            arbitratorAddress:       this._codec.decode('arbitrator()', arbitratorRaw)[0] as string,
+            arbitratorConfiguration: this._codec.decode('arbitratorConfiguration()', arbitratorConfigRaw)[0] as string,
         };
     }
 
     private async _readPaymentViaMulticall(addr: string): Promise<PaymentInfo> {
-        const cfg   = this._multicall!;
-
-        const enc = (method: string): EncodedReadCall => ({
-            target:   addr,
-            method,
-            callData: PAYMENT_IFACE.encodeFunctionData(method, []),
-            decode:   (data: string) => PAYMENT_IFACE.decodeFunctionResult(method, data)[0] as unknown,
-        });
-
-        const calls: EncodedReadCall[] = [
-            enc('payer'),
-            enc('payee'),
-            enc('token'),
-            enc('amount'),
-            enc('state'),
-            enc('settlementTime'),
-            enc('consumed'),
-            enc('disputeId'),
-            enc('disputeStartTime'),
-            enc('arbitrator'),
-            enc('arbitratorConfiguration'),
-        ];
-
-        const results = await executeMulticall(
-            this.provider, cfg.address, calls, cfg.requireSuccess !== false,
-        );
-
-        const [
-            payer, payee, token, amount, stateOrd,
-            settlementTime, consumed, disputeId, disputeStartTime,
-            arbitratorAddress, arbitratorConfiguration,
-        ] = results;
+        const values = await this._executeMulticall([
+            'payer',
+            'payee',
+            'token',
+            'amount',
+            'state',
+            'settlementTime',
+            'consumed',
+            'disputeId',
+            'disputeStartTime',
+            'arbitrator',
+            'arbitratorConfiguration',
+        ].map(method => this._encodeReadCall(addr, method)));
 
         return {
             paymentAddress: addr,
-            payer:           payer as string,
-            payee:           payee as string,
-            token:           token as string,
-            amount:          amount as bigint,
-            state:           paymentStateFromOrdinal(Number(stateOrd)),
-            settlementTime:  settlementTime as bigint,
-            consumed:        consumed as boolean,
-            disputeId:       disputeId as bigint,
-            disputeStartTime:disputeStartTime as bigint,
-            arbitratorAddress:       arbitratorAddress as string,
-            arbitratorConfiguration: arbitratorConfiguration as string,
+            payer:           values[0] as string,
+            payee:           values[1] as string,
+            token:           values[2] as string,
+            amount:          values[3] as bigint,
+            state:           paymentStateFromOrdinal(Number(values[4])),
+            settlementTime:  values[5] as bigint,
+            consumed:        values[6] as boolean,
+            disputeId:       values[7] as bigint,
+            disputeStartTime:values[8] as bigint,
+            arbitratorAddress:       values[9] as string,
+            arbitratorConfiguration: values[10] as string,
         };
+    }
+
+    private _encodeReadCall<T = unknown>(
+        target: string,
+        method: string,
+        decode?: (data: Hex) => T,
+    ): EncodedReadCall<T> {
+        return {
+            target,
+            method,
+            callData: this._codec.encode(`${method}()`),
+            decode: decode ?? (data => this._codec.decode(`${method}()`, data)[0] as T),
+        };
+    }
+
+    private async _executeMulticall(
+        calls: readonly EncodedReadCall<unknown>[],
+    ): Promise<unknown[]> {
+        const config = this._multicall;
+        if (!config) throw new Error('Multicall is not configured.');
+        return executeMulticall(
+            this._rpcClient, this._codec, config.address, calls, this._readBlock,
+        );
     }
 
     private async _readPaymentValue(paymentAddress: string, method: string): Promise<unknown> {
         const addr = requireAddress(paymentAddress, 'paymentAddress');
-        const raw = await this.provider.call({
+        const raw = await this._call({
             to: addr,
-            data: PAYMENT_IFACE.encodeFunctionData(method, []),
+            data: this._codec.encode(`${method}()`),
         });
-        return PAYMENT_IFACE.decodeFunctionResult(method, raw)[0];
+        return this._codec.decode(`${method}()`, raw)[0];
     }
 
     private async _readPaymentState(paymentAddress: string): Promise<PaymentState> {
@@ -374,25 +354,22 @@ export class PaymentReader {
     /** Current Kleros arbitration cost in wei. */
     async readArbitrationCost(paymentAddress: string): Promise<bigint> {
         const addr = requireAddress(paymentAddress, 'paymentAddress');
-        const iface = new Interface(['function arbitrationCost() view returns (uint256)']);
-        const raw = await this.provider.call({ to: addr, data: iface.encodeFunctionData('arbitrationCost', []) });
-        return iface.decodeFunctionResult('arbitrationCost', raw)[0] as bigint;
+        const raw = await this._call({ to: addr, data: this._codec.encode('arbitrationCost()') });
+        return this._codec.decode('arbitrationCost()', raw)[0] as bigint;
     }
 
     /** Current Kleros appeal cost in wei. Throws if not DISPUTED. */
     async readAppealCost(paymentAddress: string): Promise<bigint> {
         const addr = requireAddress(paymentAddress, 'paymentAddress');
-        const iface = new Interface(['function appealCost() view returns (uint256)']);
-        const raw = await this.provider.call({ to: addr, data: iface.encodeFunctionData('appealCost', []) });
-        return iface.decodeFunctionResult('appealCost', raw)[0] as bigint;
+        const raw = await this._call({ to: addr, data: this._codec.encode('appealCost()') });
+        return this._codec.decode('appealCost()', raw)[0] as bigint;
     }
 
     /** Current appeal window. `end == 0n` means no ruling has been issued yet. */
     async readAppealPeriod(paymentAddress: string): Promise<AppealPeriod> {
         const addr = requireAddress(paymentAddress, 'paymentAddress');
-        const iface = new Interface(['function appealPeriod() view returns (uint256 start, uint256 end)']);
-        const raw = await this.provider.call({ to: addr, data: iface.encodeFunctionData('appealPeriod', []) });
-        const result = iface.decodeFunctionResult('appealPeriod', raw);
+        const raw = await this._call({ to: addr, data: this._codec.encode('appealPeriod()') });
+        const result = this._codec.decode('appealPeriod()', raw);
         return { start: result[0] as bigint, end: result[1] as bigint };
     }
 
@@ -402,11 +379,17 @@ export class PaymentReader {
     async readPendingWithdrawal(paymentAddress: string, wallet: string): Promise<bigint> {
         const addr = requireAddress(paymentAddress, 'paymentAddress');
         const walletAddr = requireAddress(wallet, 'wallet');
-        const iface = new Interface(['function pendingWithdrawals(address) view returns (uint256)']);
-        const raw = await this.provider.call({
+        const raw = await this._call({
             to: addr,
-            data: iface.encodeFunctionData('pendingWithdrawals', [walletAddr]),
+            data: this._codec.encode('pendingWithdrawals(address)', [walletAddr]),
         });
-        return iface.decodeFunctionResult('pendingWithdrawals', raw)[0] as bigint;
+        return this._codec.decode('pendingWithdrawals(address)', raw)[0] as bigint;
+    }
+
+    private _call(request: { to: string; data: string }): Promise<`0x${string}`> {
+        return ethCall(this._rpcClient, {
+            to: request.to,
+            data: request.data as `0x${string}`,
+        }, this._readBlock);
     }
 }

@@ -13,7 +13,6 @@ import {
   PaymentEvents,
   PaymentTopics,
   PaymentState,
-  decodeDPaymentError,
   IdGenerator,
 } from '@rakelabs/dpayments-sdk';
 ```
