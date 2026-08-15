@@ -1,66 +1,43 @@
-# Error Decoder
+# Error decoding
 
-When a transaction reverts on-chain, the wallet throws an error containing raw hex revert data. `decodeDPaymentError` turns that into a readable error name and structured arguments.
+The core SDK decodes raw revert bytes, not provider exception objects.
 
-## Return type
-
-```ts
-type DecodedRevert =
-  | { error: string; args: Record<string, unknown> }  // known custom error
-  | { raw: string }                                     // unknown revert hex
-  | null;                                               // no revert data at all
-```
-
-## Usage
+`AbiCodec.decodeError(data)` accepts an EVM revert payload and returns the error name and positional arguments when the selector is present in the generated protocol ABI:
 
 ```ts
-import { decodeDPaymentError } from '@rakelabs/dpayments-sdk';
-
-try {
-  await signer.sendTransaction({ ...tx, value: BigInt(tx.value) });
-} catch (err) {
-  const decoded = decodeDPaymentError(err);
-
-  if (decoded && 'error' in decoded) {
-    // Contract reverted with a known error. Show the error name to the user.
-    // Use decoded.args to build richer messages.
-    console.error(`Reverted: ${decoded.error}`, decoded.args);
-    // e.g. "Reverted: BadEthValue" { sent: 500n, expectedMin: 1000n }
-
-  } else if (decoded && 'raw' in decoded) {
-    // Revert data found but the selector doesn't match any DPayment error.
-    // Could be a Kleros core error, ERC20 error, or an error from a new
-    // contract version. Surface the first few bytes so the user has something.
-    console.warn('Unknown revert:', decoded.raw.slice(0, 14) + '...');
-
-  } else {
-    // No revert data at all. This is not a contract revert.
-    // Network error, user rejected the tx in MetaMask, insufficient funds, etc.
-    console.error('Transaction failed:', err);
-  }
+interface DecodedError {
+  name: string;
+  args: readonly unknown[];
 }
 ```
 
-## How it works
+Unknown selectors, empty data, and malformed data return `undefined`.
 
-The decoder walks the error object recursively looking for hex revert data. Most wallet libraries (ethers, viem, wagmi) embed the revert payload at different depths; the walker checks `data`, `error`, `info`, `cause`, `originalError`, and `response` fields. Once it finds a hex string, it matches the first 4 bytes (the Solidity error selector) against every known DPayment error signature.
+Multicall uses this operation directly because Multicall3 returns raw failure bytes. Provider and wallet exceptions are different: ethers, viem, wagmi, and wallets wrap revert data in library-specific objects. Extracting bytes from those objects belongs to their integration packages, not this core package.
 
-This is a **pure function**. No RPC calls, no chain queries, no gas. You call it after the wallet rejects the transaction.
+An integration helper should perform this sequence:
 
-## Multi-SDK consumers
-
-If your app uses multiple Rake Labs SDKs, chain the decoders:
-
-```ts
-import { decodeDPaymentError } from '@rakelabs/dpayments-sdk';
-import { decodeKlescrowError } from '@rakelabs/klescrow-sdk';
-
-const decoded = decodeKlescrowError(err)
-            ?? decodeDPaymentError(err);
+```text
+provider-specific exception
+          |
+          v
+extract raw revert bytes
+          |
+          v
+codec.decodeError(bytes)
 ```
 
-The `??` short-circuits; whichever decoder matches first wins. Each SDK only recognizes its own contract errors, so there are no collisions.
+Applications using an ethers or viem integration should use that integration's error helper. The core package deliberately does not inspect arbitrary `error.data`, `cause`, `details`, or JSON-RPC response shapes.
 
-## Decoded errors
+Error arguments are positional. Interpret them after checking the error name:
 
-The error decoder recognizes all custom errors defined in the payment contract and factory. When a known error is detected, `decoded.error` contains the error name and `decoded.args` contains any associated values.
+```ts
+const decoded = codec.decodeError(rawData);
+
+if (decoded?.name === 'BadEthValue') {
+  const [sent, expectedMinimum] = decoded.args;
+  console.error({ sent, expectedMinimum });
+}
+```
+
+The generated ABI covers Solidity built-ins and the explicitly supported protocol dependency errors. An arbitrary configured token or arbitrator may return an unknown selector; integration helpers should preserve the raw bytes in that case.

@@ -140,24 +140,9 @@ For ERC20 payments, use `prepareCreateErc20Payment(...)` with the token address 
 
 ## Errors
 
-Use `decodeDPaymentError` to turn raw revert data into a readable contract error.
-
-```ts
-import { decodeDPaymentError } from '@rakelabs/dpayments-sdk';
-
-try {
-  await signer.sendTransaction({
-    to: tx.to,
-    data: tx.data,
-    value: BigInt(tx.value),
-  });
-} catch (err) {
-  const decoded = decodeDPaymentError(err);
-  if (decoded && 'error' in decoded) {
-    console.error(decoded.error, decoded.args);
-  }
-}
-```
+Raw contract revert bytes are decoded by the ABI codec. Extracting those bytes from
+wallet or provider exceptions belongs to the ethers or viem integration because
+each library uses different error shapes. See the error-decoding guide.
 
 ## Documentation
 

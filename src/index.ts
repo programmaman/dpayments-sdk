@@ -1,6 +1,6 @@
 // ─── Main entry points ─────────────────────────────────────────────────────
 export { DPayments, FactoryHandle } from './DPayments.js';
-export type { DPaymentsSdkConfig } from './DPayments.js';
+export type { DPaymentsFromRpcOptions, DPaymentsSdkConfig } from './DPayments.js';
 
 // ─── Bound dPayment handle ───────────────────────────────────────────────────
 export { DPayment } from './DPayment.js';
@@ -42,16 +42,16 @@ export type {
 
 // ─── Common ─────────────────────────────────────────────────────────────────
 export type { PreparedTx } from './common/PreparedTx.js';
+export type { PreparedRpc, ReadBlockReference, ReadBlockTag, RpcClient } from './common/RpcClient.js';
+export type { AbiCodec, DecodedError, DecodedEvent, Hex } from './common/AbiCodec.js';
 export type { SigningPreview, FeeBreakdown, FeeLineItem } from './common/TxPreview.js';
 export { IdGenerator, requireAddress, uuidToBytes32Hex, bytes32HexToUuid, ZERO_ADDRESS, buildFeeBreakdown, formatUnixSec } from './common/index.js';
 
 // ─── Multicall ──────────────────────────────────────────────────────────────
 export type { MulticallConfig } from './multicall.js';
 
-// ─── Error decoder ─────────────────────────────────────────────────────────
-export { decodeDPaymentError } from './error-decoder.js';
-export type { DecodedRevert } from './error-decoder.js';
-
 // ─── Deployments ────────────────────────────────────────────────────────────
 export * as DPaymentsDeployments from './deployments.js';
 export { FACTORY_ADDRESS, SUPPORTED_CHAIN_IDS, isSupportedChainId, requireSupportedChainId, getFactoryAddress, listDeployments } from './deployments.js';
+
+export { ABI, PAYMENT_EVENT_TOPICS } from './abi.js';

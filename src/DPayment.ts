@@ -1,4 +1,3 @@
-import type { AbstractProvider } from 'ethers';
 import type { PreparedTx } from './common/index.js';
 import type {
     PaymentInfo,
@@ -14,6 +13,8 @@ import type { PaymentReadable } from './internal/PaymentReadable.js';
 import { PaymentReader } from './PaymentReader.js';
 import { PaymentTxBuilder } from './PaymentTxBuilder.js';
 import { PaymentEvents, TOPIC_EVIDENCE } from './PaymentEvents.js';
+import type { RpcClient } from './common/index.js';
+import { ethGetLogs } from './internal/rpc.js';
 
 /**
  * A handle bound to a specific deployed DisputablePayment clone.
@@ -37,7 +38,7 @@ export class DPayment {
         private readonly reader:   PaymentReader,
         private readonly builder:  PaymentTxBuilder,
         private readonly decoder:  PaymentEvents,
-        private readonly provider: AbstractProvider,
+        private readonly rpcClient: RpcClient,
         private readonly walletAddress?: string,
     ) {
         this.read = Object.assign(
@@ -189,7 +190,7 @@ export class DPayment {
         fromBlock: number | 'earliest' = 0,
         toBlock:   number | 'latest'   = 'latest',
     ): Promise<PaymentEvent[]> {
-        const rawLogs = await this.provider.getLogs({
+        const rawLogs = await ethGetLogs(this.rpcClient, {
             address:  this.address,
             fromBlock,
             toBlock,
@@ -219,7 +220,7 @@ export class DPayment {
         fromBlock: number | 'earliest' = 0,
         toBlock:   number | 'latest'   = 'latest',
     ): Promise<PaymentEvidenceEvent[]> {
-        const rawLogs = await this.provider.getLogs({
+        const rawLogs = await ethGetLogs(this.rpcClient, {
             address:  this.address,
             topics:   [TOPIC_EVIDENCE],
             fromBlock,
