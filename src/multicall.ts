@@ -1,5 +1,5 @@
 import type { AbiCodec, DecodedError, Hex } from './common/AbiCodec.js';
-import type { RpcClient } from './common/RpcClient.js';
+import type { RpcClient } from './common/index.js';
 import { ethCall, type RpcBlockIdentifier } from './internal/rpc.js';
 
 export interface MulticallConfig {

@@ -1,8 +1,6 @@
 import type { PreparedTx } from './common/index.js';
 import type {
-    PaymentInfo,
     AppealPeriod,
-    PaymentState,
     PaymentEvent,
     PaymentEvidenceEvent,
     PrepareRaiseDisputeResult,
