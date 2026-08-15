@@ -38,12 +38,11 @@
     "node": ">=20"
   },
   "scripts": {
-    "lint": "eslint src scripts",
-    "lint:fix": "eslint src scripts --fix",
-    "generate:abi": "node scripts/generate-abi.mjs",
-    "check:abi": "node scripts/generate-abi.mjs --check",
-    "build": "npm run check:abi && tsc",
-    "typecheck": "npm run check:abi && tsc --noEmit",
+    "lint": "eslint src",
+    "lint:fix": "eslint src --fix",
+    "clean": "node scripts/clean.mjs",
+    "build": "npm run clean && tsc",
+    "typecheck": "tsc --noEmit",
     "prepack": "npm run build",
     "pack:check": "npm pack --dry-run",
     "test": "npm run build && tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js && node --import tsx/esm --test --test-concurrency=1 test/e2e/*.e2e.test.ts"

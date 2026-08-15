@@ -9,3 +9,5 @@ test/
 tsconfig.test.json
 package.local.json
 /future-work.md
+/abi/
+/scripts/generate-abi.mjs
