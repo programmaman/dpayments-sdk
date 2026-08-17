@@ -91,10 +91,10 @@ export class PaymentEvents {
         if (!matchesTopic(log, TOPIC_EVIDENCE)) return undefined;
         const event = this.codec.decodeEvent(EVIDENCE, log.topics as Hex[], log.data as Hex);
         return {
-            arbitrator: event.arbitrator as string,
-            evidenceGroupId: event.evidenceGroupId as bigint,
-            party: event.party as string,
-            evidenceUri: event.evidenceUri as string,
+            arbitrator: event._arbitrator as string,
+            evidenceGroupId: event._evidenceGroupId as bigint,
+            party: event._party as string,
+            evidenceUri: event._evidence as string,
             logAddress: log.address,
             transactionHash: log.transactionHash,
         };

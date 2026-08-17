@@ -23,7 +23,6 @@ import type { MulticallConfig } from './multicall.js';
 import { getFactoryAddress, requireSupportedChainId } from './deployments.js';
 import type { ReadBlockReference, RpcClient } from './common/index.js';
 import type { AbiCodec } from './common/AbiCodec.js';
-import { decodeRpcChainId, ethGetLogs } from './internal/rpc.js';
 
 export interface DPaymentsSdkConfig {
     chainId: number;
@@ -198,7 +197,7 @@ export class FactoryHandle {
         fromBlock: number | 'earliest' = 0,
         toBlock:   number | 'latest'   = 'latest',
     ): Promise<PaymentCreatedEvent[]> {
-        const rawLogs = await ethGetLogs(this.rpcClient, {
+        const rawLogs = await this.rpcClient.getLogs({
             address:   this.cfg.factoryAddress,
             topics:    [TOPIC_PAYMENT_CREATED],
             fromBlock,
@@ -223,7 +222,7 @@ export class FactoryHandle {
         toBlock:     number | 'latest'   = 'latest',
     ): Promise<PaymentCreatedEvent[]> {
         const payeeTopic = '0x000000000000000000000000' + requireAddress(payee, 'payee').toLowerCase().slice(2);
-        const rawLogs = await ethGetLogs(this.rpcClient, {
+        const rawLogs = await this.rpcClient.getLogs({
             address:   this.cfg.factoryAddress,
             topics:    [TOPIC_PAYMENT_CREATED, null, null, payeeTopic],
             fromBlock,
@@ -248,7 +247,7 @@ export class FactoryHandle {
         toBlock:     number | 'latest'   = 'latest',
     ): Promise<PaymentCreatedEvent[]> {
         const creatorTopic = '0x000000000000000000000000' + requireAddress(creator, 'creator').toLowerCase().slice(2);
-        const rawLogs = await ethGetLogs(this.rpcClient, {
+        const rawLogs = await this.rpcClient.getLogs({
             address:   this.cfg.factoryAddress,
             topics:    [TOPIC_PAYMENT_CREATED, null, creatorTopic],
             fromBlock,
@@ -345,9 +344,7 @@ export class DPayments {
         rpcClient: RpcClient,
         options: DPaymentsFromRpcOptions,
     ): Promise<DPayments> {
-        const chainId = decodeRpcChainId(
-            await rpcClient.request({ method: 'eth_chainId', params: [] }),
-        );
+        const chainId = await rpcClient.getChainId();
         const factoryAddress = options.factoryAddress ?? getFactoryAddress(chainId);
         if (!factoryAddress) {
             throw new Error(`Unsupported chain ID: ${chainId}`);
