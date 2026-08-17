@@ -11,7 +11,6 @@ import {
 import type { PaymentReadable } from './internal/PaymentReadable.js';
 import { type MulticallConfig, type EncodedReadCall, executeMulticall } from './multicall.js';
 import type { ReadBlockReference, RpcClient } from './common/index.js';
-import { encodeRpcBlockReference, ethCall, type RpcBlockIdentifier } from './internal/rpc.js';
 import type { AbiCodec, Hex } from './common/AbiCodec.js';
 
 // ─── PaymentReader ────────────────────────────────────────────────────────────
@@ -29,7 +28,7 @@ export class PaymentReader {
     private readonly _multicall?: MulticallConfig;
     private readonly _rpcClient: RpcClient;
     private readonly _codec: AbiCodec;
-    private readonly _readBlock: RpcBlockIdentifier;
+    private readonly _readBlock: ReadBlockReference;
     readonly readPayment: PaymentReadable<[paymentAddress: string]>;
 
     constructor(
@@ -41,7 +40,7 @@ export class PaymentReader {
         this._rpcClient = client;
         this._codec = codec;
         this._multicall = multicallConfig;
-        this._readBlock = encodeRpcBlockReference(readBlock);
+        this._readBlock = readBlock;
         this.readPayment = Object.assign(
             (paymentAddress: string) => this._readPaymentSnapshot(paymentAddress),
             {
@@ -387,9 +386,10 @@ export class PaymentReader {
     }
 
     private _call(request: { to: string; data: string }): Promise<`0x${string}`> {
-        return ethCall(this._rpcClient, {
+        return this._rpcClient.call({
             to: request.to,
             data: request.data as `0x${string}`,
-        }, this._readBlock);
+            block: this._readBlock,
+        });
     }
 }

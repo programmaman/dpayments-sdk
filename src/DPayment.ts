@@ -12,7 +12,6 @@ import { PaymentReader } from './PaymentReader.js';
 import { PaymentTxBuilder } from './PaymentTxBuilder.js';
 import { PaymentEvents, TOPIC_EVIDENCE } from './PaymentEvents.js';
 import type { RpcClient } from './common/index.js';
-import { ethGetLogs } from './internal/rpc.js';
 
 /**
  * A handle bound to a specific deployed DisputablePayment clone.
@@ -188,7 +187,7 @@ export class DPayment {
         fromBlock: number | 'earliest' = 0,
         toBlock:   number | 'latest'   = 'latest',
     ): Promise<PaymentEvent[]> {
-        const rawLogs = await ethGetLogs(this.rpcClient, {
+        const rawLogs = await this.rpcClient.getLogs({
             address:  this.address,
             fromBlock,
             toBlock,
@@ -218,7 +217,7 @@ export class DPayment {
         fromBlock: number | 'earliest' = 0,
         toBlock:   number | 'latest'   = 'latest',
     ): Promise<PaymentEvidenceEvent[]> {
-        const rawLogs = await ethGetLogs(this.rpcClient, {
+        const rawLogs = await this.rpcClient.getLogs({
             address:  this.address,
             topics:   [TOPIC_EVIDENCE],
             fromBlock,
