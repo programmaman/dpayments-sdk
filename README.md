@@ -11,14 +11,17 @@ Your app -> DPayments SDK -> unsigned transaction -> user wallet -> blockchain
 ## Install
 
 ```bash
-npm install @rakelabs/dpayments-sdk ethers
+# Choose one integration. The SDK core has no Ethers or Viem dependency.
+npm install @rakelabs/dpayments-sdk @rakelabs/ethers-adapter ethers
+# or
+npm install @rakelabs/dpayments-sdk @rakelabs/viem-adapter viem
 ```
 
 Requirements:
 
 - Node.js 20+
-- ethers v6
-- an EIP-1193 wallet provider, JSON-RPC provider, or compatible ethers provider
+- an application-supplied `RpcClient` and `AbiCodec`
+- either the Ethers adapter, the Viem adapter, or your own implementations
 
 ## What You Build With It
 
@@ -36,15 +39,24 @@ Every write method returns a `PreparedTx` with a `preview` field. Show that prev
 
 ```ts
 import { BrowserProvider, ethers } from 'ethers';
-import { DPayments } from '@rakelabs/dpayments-sdk';
+import { ABI, DPayments } from '@rakelabs/dpayments-sdk';
+import {
+  createEthersAbiCodec,
+  createEthersRpcClient,
+} from '@rakelabs/ethers-adapter';
 
 const provider = new BrowserProvider(window.ethereum);
 await provider.send('eth_requestAccounts', []);
 
 const signer = await provider.getSigner();
 const payerAddress = await signer.getAddress();
+const rpcClient = createEthersRpcClient(provider);
+const codec = createEthersAbiCodec(ABI);
 
-const dpayments = await DPayments.fromProvider(provider, payerAddress);
+const dpayments = await DPayments.fromRpc(rpcClient, {
+  codec,
+  walletAddress: payerAddress,
+});
 
 const settlementTime = BigInt(Math.floor(Date.now() / 1000)) + 3600n;
 const { tx: createTx, paymentId } = await dpayments.factory.prepareCreateEthPayment({
@@ -146,11 +158,15 @@ each library uses different error shapes. See the error-decoding guide.
 
 ## Documentation
 
+This README and the linked guides describe the unreleased `0.2.0` API until
+that version is tagged. For `0.1.x` usage, open the matching Git release tag.
+
 | Document | Use it for |
 | --- | --- |
 | [docs/reference.md](docs/reference.md) | API reference, types, actions, events, and common mistakes |
 | [docs/disputes.md](docs/disputes.md) | Dispute, evidence, ruling, and appeal lifecycle |
 | [docs/error-decoder.md](docs/error-decoder.md) | Revert decoding details |
+| [docs/migration-0.1-to-0.2.md](docs/migration-0.1-to-0.2.md) | Migrate from provider-based initialization |
 | [docs/advanced.md](docs/advanced.md) | Reader, transaction builder, multicall, and implementation selection |
 | [docs/on-chain.md](docs/on-chain.md) | Contract-level behavior and event model |
 

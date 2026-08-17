@@ -29,6 +29,22 @@ codec.decodeError(bytes)
 
 Applications using an ethers or viem integration should use that integration's error helper. The core package deliberately does not inspect arbitrary `error.data`, `cause`, `details`, or JSON-RPC response shapes.
 
+For Ethers:
+
+```ts
+import { decodeEthersError } from '@rakelabs/ethers-adapter';
+
+const decoded = decodeEthersError(error, codec);
+```
+
+For Viem:
+
+```ts
+import { decodeViemError } from '@rakelabs/viem-adapter';
+
+const decoded = decodeViemError(error, codec);
+```
+
 Error arguments are positional. Interpret them after checking the error name:
 
 ```ts

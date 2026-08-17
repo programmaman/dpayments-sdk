@@ -17,6 +17,27 @@ import {
 } from '@rakelabs/dpayments-sdk';
 ```
 
+The SDK core accepts these provider-neutral capabilities:
+
+```ts
+interface RpcClient {
+  call(request: CallRequest): Promise<Hex>;
+  getLogs(filter: LogFilter): Promise<EvmLog[]>;
+  getChainId(): Promise<number>;
+  getBlock(reference: ReadBlockReference): Promise<BlockInfo>;
+}
+
+interface AbiCodec {
+  encodeFunctionData(...): Hex;
+  decodeFunctionResult(...): unknown;
+  decodeEvent(...): DecodedEvent;
+  decodeError(data: Hex): DecodedError | undefined;
+}
+```
+
+Use `@rakelabs/ethers-adapter` or `@rakelabs/viem-adapter` to create these
+objects, or provide your own implementation.
+
 ## State Enum
 
 ```ts
@@ -32,8 +53,8 @@ enum PaymentState {
 
 | Method | Purpose |
 | --- | --- |
-| `DPayments.fromProvider(provider, walletAddress?, implNameOrAddress?, multicall?)` | Detect chain and default factory from provider. |
-| `DPayments.forChain(chainId, provider, walletAddress?, impl?)` | Use the canonical factory address for a specific chain ID. |
+| `DPayments.fromRpc(rpcClient, { codec, walletAddress?, implNameOrAddress?, multicall? })` | Detect chain and default factory from an injected RPC client. |
+| `DPayments.forChain(chainId, rpcClient, codec, walletAddress?, impl?)` | Use the canonical factory address for a specific chain ID. |
 | `new DPayments(config)` | Use explicit factory, chain, multicall, and implementation config. |
 | `dpayments.dPayment(address)` | Return a bound payment handle. No network call. |
 
@@ -43,7 +64,8 @@ enum PaymentState {
 interface DPaymentsSdkConfig {
   chainId: number;
   factoryAddress: string;
-  provider: AbstractProvider;
+  rpcClient: RpcClient;
+  codec: AbiCodec;
   walletAddress?: string;
   multicall?: { address: string };
   impl?: { address: string; name: string };

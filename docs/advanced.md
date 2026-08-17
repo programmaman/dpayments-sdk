@@ -14,7 +14,7 @@ This guide covers direct builders, readers, implementation pinning, multicall, e
 Most apps should use:
 
 ```ts
-const dpayments = await DPayments.fromProvider(provider, walletAddress);
+const dpayments = await DPayments.fromRpc(rpcClient, { codec, walletAddress });
 const { tx } = await dpayments.factory.prepareCreateEthPayment(params);
 const payment = dpayments.dPayment('0xPAYMENT_ADDRESS');
 ```
@@ -25,7 +25,8 @@ const payment = dpayments.dPayment('0xPAYMENT_ADDRESS');
 const dpayments = new DPayments({
   chainId: 11155111,
   factoryAddress: '0xFACTORY_ADDRESS',
-  provider,
+  rpcClient,
+  codec,
   walletAddress,
   multicall: {
     address: '0xcA11bde05977b3631167028862bE2a173976CA11',
@@ -78,20 +79,21 @@ const impls = await dpayments.factory.listImplementations();
 const pinned = new DPayments({
   chainId: 11155111,
   factoryAddress: '0xFACTORY_ADDRESS',
-  provider,
+  rpcClient,
+  codec,
   walletAddress,
   impl: impls[0],
 });
 ```
 
-You can also resolve by name or address through `fromProvider()`:
+You can also resolve by name or address through `fromRpc()`:
 
 ```ts
-const dpayments = await DPayments.fromProvider(
-  provider,
+const dpayments = await DPayments.fromRpc(rpcClient, {
+  codec,
   walletAddress,
-  'DisputablePayment',
-);
+  implNameOrAddress: 'DisputablePayment',
+});
 ```
 
 ## Multicall Reads
@@ -99,14 +101,11 @@ const dpayments = await DPayments.fromProvider(
 Add Multicall3 to batch `readPayment()` and `readFactory()` internals.
 
 ```ts
-const dpayments = await DPayments.fromProvider(
-  provider,
+const dpayments = await DPayments.fromRpc(rpcClient, {
+  codec,
   walletAddress,
-  undefined,
-  {
-    address: '0xcA11bde05977b3631167028862bE2a173976CA11',
-  },
-);
+  multicall: { address: '0xcA11bde05977b3631167028862bE2a173976CA11' },
+});
 
 const info = await dpayments.dPayment('0xPAYMENT_ADDRESS').read();
 const config = await dpayments.factory.readConfig();
@@ -151,10 +150,9 @@ Builder methods:
 ## Direct Reader
 
 ```ts
-import { JsonRpcProvider } from 'ethers';
 import { PaymentReader } from '@rakelabs/dpayments-sdk';
 
-const reader = new PaymentReader(new JsonRpcProvider(process.env.RPC_URL));
+const reader = new PaymentReader(rpcClient, codec);
 
 const config = await reader.readFactory('0xFACTORY_ADDRESS');
 const payment = await reader.readPayment('0xPAYMENT_ADDRESS');
@@ -178,8 +176,8 @@ For custom indexers:
 ```ts
 import { PaymentEvents, PaymentTopics } from '@rakelabs/dpayments-sdk';
 
-const events = new PaymentEvents();
-const rawLogs = await provider.getLogs({
+const events = new PaymentEvents(codec);
+const rawLogs = await rpcClient.getLogs({
   address: factoryAddress,
   topics: [PaymentTopics.PAYMENT_CREATED],
   fromBlock: 0,
